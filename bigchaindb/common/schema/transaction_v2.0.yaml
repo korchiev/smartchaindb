@@ -72,6 +72,11 @@ definitions:
       - BID
       - ACCEPT
       - RETURN
+      - ADVERTISEMENT
+      - BUY_OFFER
+      - SELL
+      - REQUEST_RETURN
+      - ACCEPT_RETURN
   asset:
     type: object
     additionalProperties: false

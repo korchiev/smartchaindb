@@ -1,0 +1,73 @@
+type: object
+title: Transaction Schema - REQUEST_RETURN specific properties
+required:
+- asset
+- metadata
+- inputs
+properties:
+  asset:
+    properties:
+      id:
+        "$ref": "#/definitions/sha3_hexdigest"
+      sell_transaction_id:
+        "$ref": "#/definitions/sha3_hexdigest"
+    required:
+    - id
+    - sell_transaction_id
+  metadata:
+    required:
+    - requester_public_key
+    - return_reason
+    - return_request_timestamp
+    - return_policy_details
+    properties:
+      requester_public_key:
+        "$ref": "#/definitions/base58"
+      return_reason:
+        type: string
+        minLength: 1
+        description: "Reason for requesting return"
+      return_request_timestamp:
+        type: string
+        format: "date-time"
+      return_policy_details:
+        type: object
+        properties:
+          return_window_days:
+            type: integer
+            minimum: 0
+          return_conditions:
+            type: string
+            description: "Conditions that must be met for return"
+          return_status:
+            type: string
+            enum: ["PENDING", "APPROVED", "REJECTED", "COMPLETED"]
+            default: "PENDING"
+  inputs:
+    type: array
+    minItems: 1
+    maxItems: 1
+    items:
+      "$ref": "#/definitions/input"
+definitions:
+  sha3_hexdigest:
+    pattern: "[0-9a-f]{64}"
+    type: string
+  base58:
+    pattern: "[1-9a-zA-Z^OIl]{43,44}"
+    type: string
+  input:
+    type: object
+    required:
+    - fulfills
+    properties:
+      fulfills:
+        type: object
+        required:
+        - txid
+        - output
+        properties:
+          txid:
+            type: string
+          output:
+            type: integer

@@ -11,6 +11,7 @@ Attributes:
         representing an unspent output.
 
 """
+import json
 import os
 from datetime import datetime
 
@@ -20,7 +21,23 @@ from functools import reduce, lru_cache
 import rapidjson
 from datetime import datetime
 from subprocess import Popen, PIPE
+####
 
+from pyshacl import validate
+from rdflib import Graph, Namespace, Literal, RDF, URIRef, XSD
+
+from rdflib import plugin
+from rdflib.serializer import Serializer
+
+
+import os
+import json
+import logging
+import time
+
+
+#from SPARQLWrapper import SPARQLWrapper
+####
 import base58
 import logging
 from cryptoconditions import Fulfillment, ThresholdSha256, Ed25519Sha256
@@ -30,7 +47,7 @@ from cryptoconditions.exceptions import (
     ASN1EncodeError,
     UnsupportedTypeError,
 )
-
+from bigchaindb_driver.crypto import generate_keypair
 
 try:
     from hashlib import sha3_256
@@ -55,6 +72,7 @@ from bigchaindb.common.exceptions import (
 )
 from bigchaindb.common.utils import serialize
 from .memoize import memoize_from_dict, memoize_to_dict
+from functools import lru_cache
 
 
 logger = logging.getLogger(__name__)
@@ -72,6 +90,359 @@ UnspentOutput = namedtuple(
     ),
 )
 
+
+
+import time
+import json
+import logging
+from rdflib import Graph
+from functools import lru_cache
+from pyshacl import validate
+
+# Set up logging
+log_file = 'transaction_validation.log'
+logging.basicConfig(level=logging.DEBUG, filename=log_file, 
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Static context (common across all transaction types)
+STATIC_CONTEXT = {
+    "@context": {
+        "ex": "http://example.org/",
+        "schema": "http://schema.org/"
+    }
+}
+
+# Base properties common to all transactions
+BASE_PROPERTIES = {
+    "transaction_id": {"rdf_property": "ex:transaction_id"},
+    "operation": {"rdf_property": "ex:operation"}
+}
+
+# Transaction types configuration, with common properties extracted
+transaction_config = {
+    "BUYOFFER": {
+        "properties": {
+            **BASE_PROPERTIES,
+            "adv_ref": {
+                "rdf_property": "ex:adv_ref",
+                "base": "http://example.org/txn/",
+                "shape": "ex:AdvShape"
+            },
+            "asset_ref": {
+                "rdf_property": "ex:asset_ref",
+                "base": "http://example.org/txn/", 
+                "shape": "ex:AssetShape"
+            },
+            "spend": {
+                "rdf_property": "ex:spend",
+                "base": "http://example.org/txn/", 
+                "shape": "ex:AssetShape"
+            }
+        }
+    },
+    "SELL": {
+        "properties": {
+            **BASE_PROPERTIES,
+            "adv_ref": {
+                "rdf_property": "ex:adv_ref",
+                "base": "http://example.org/txn/",
+                "shape": "ex:AdvShape"
+            },
+            "buyOffer_ref": {
+                "rdf_property": "ex:buyOffer_ref",
+                "base": "http://example.org/txn/",
+                "shape": "ex:BuyOfferShape"
+            },
+            "spend": {
+                "rdf_property": "ex:spend",
+                "base": "http://example.org/txn/", 
+                "shape": "ex:AssetShape"
+            }
+        }
+    },
+    "REQUEST_RETURN": {
+            "properties": {
+                **BASE_PROPERTIES,
+                "sell_ref": {
+                    "rdf_property": "ex:sell_ref",
+                    "base": "http://example.org/txn/",
+                    #"shape": "ex:SellShape"
+                },
+                # "asset_ref": {
+                #     "rdf_property": "ex:asset_ref",
+                #     "base": "http://example.org/txn/", 
+                #     #"shape": "ex:AssetShape"  
+                # }
+                # "spend": {
+                #     "rdf_property": "ex:spend",
+                #     "base": "http://example.org/txn/", 
+                #     "shape": "ex:AssetShape"  
+                # }
+            }
+         },
+        "ACCEPT_RETURN": {
+            "properties": {
+                **BASE_PROPERTIES,
+                "sell_ref": {
+                    "rdf_property": "ex:adv_ref",
+                    "base": "http://example.org/txn/",  
+                    #"shape": "ex:SellShape"  
+                },
+                # "request_return_ref": {
+                #     "rdf_property": "ex:request_return_ref",
+                #     "base": "http://example.org/txn/",  
+                #     "shape": "ex:Request_ReturnShape"  
+                # },
+                # "spend": {
+                # "rdf_property": "ex:spend",
+                # "base": "http://example.org/txn/", 
+                # #"shape": "ex:AssetShape"  
+                #  }
+            }
+        }
+}
+
+# RDF Conversion Cache
+class RDFConverter:
+    def __init__(self):
+        self.rdf_cache = {}
+        #self.transaction_config = transaction_config
+
+    @lru_cache(maxsize=None)  # Cache the static context part to avoid recalculating
+    def get_static_context(self):
+        """Return the static context part of the RDF data."""
+        return STATIC_CONTEXT
+
+    def process_property(self, prop, details, json_data, jsonld_data):
+        """Process each property and add it to the JSON-LD data."""
+        if prop in json_data:
+            value = json_data[prop]
+            if "base" in details:
+                jsonld_data[details["rdf_property"]] = {
+                    "@id": details["base"] + value
+                }
+            else:
+                jsonld_data[details["rdf_property"]] = value
+
+    def convert_json_to_rdf(self, json_data, transaction_config):
+        """Convert JSON data to RDF graph with caching."""
+        #start_time = time.time()
+
+        # Check if the result is already cached based on the JSON data
+        cache_key = json.dumps(json_data, sort_keys=True)
+        if cache_key in self.rdf_cache:
+            #logging.info("Cache hit: Returning cached RDF graph.")
+            return self.rdf_cache[cache_key]
+        if json_data["operation"] ==  "ADV":
+            
+            context = {
+                "@context": {
+                    "ex": "http://example.org/",
+                    "schema": "http://schema.org/",
+                    "transaction_id": "ex:transaction_id",
+                    "operation": "ex:operation",
+                    "status": "ex:status",
+                    "ref": {
+                        "@id": "ex:ref",
+                        "@type": "@id"  # Ensure this is treated as a URI
+                    }
+                }
+            }
+
+            jsonld_data = {
+                "@context": context["@context"],  # Reuse the existing context variable
+                "@id": "http://example.org/txn/" + json_data["transaction_id"],
+                "@type": "ex:" + json_data["operation"],
+                "ref": "http://example.org/txn/" + json_data["asset_id"],  # Now ref is a URI
+                "status": "Open"  # Literal value without prefix
+            }
+        else:
+            # Context definition
+            context = {
+                "@context": {
+                    "ex": "http://example.org/",
+                    "schema": "http://schema.org/"
+                }
+            }
+
+            # Assume json_data contains the incoming transaction data
+            transaction_type = json_data.get("operation")
+            config = transaction_config.get(transaction_type)
+
+            if not config:
+                raise ValueError(f"Unsupported transaction type: {transaction_type}")
+
+            # Generate the JSON-LD structure dynamically based on the configuration
+            jsonld_data = {
+                "@context": context["@context"],
+                "@id": "http://example.org/txn/" + json_data["transaction_id"],
+                "@type": "ex:" + transaction_type
+            }
+
+            # for prop, details in config["properties"].items():
+            #     self.process_property(prop, details, json_data, jsonld_data)
+
+            # Dynamically assign properties based on the config
+            for prop, details in config["properties"].items():
+                if prop in json_data:
+                    value = json_data[prop]
+                    
+                    # Check if the property has a base URL for URI creation
+                    if "base" in details:
+                        # Handle URI-based values like adv_ref and asset_ref
+                        jsonld_data[details["rdf_property"]] = {
+                            "@id": details["base"] + value  # Create the URI based on the base for both adv_ref and asset_ref
+                        }
+                    else:
+                        # Handle literal values like transaction_id and operation
+                        jsonld_data[details["rdf_property"]] = value          
+            
+        # Create RDF graph from the JSON-LD data
+        g = Graph()
+        g.parse(data=json.dumps(jsonld_data), format='json-ld')
+
+        # Cache the RDF graph for future use
+        self.rdf_cache[cache_key] = g
+
+        # end_time = time.time()
+        # logging.info(f"Time taken to convert JSON to RDF: {end_time - start_time} seconds")
+        return g
+
+
+# SHACL Validator
+
+
+class SHACLValidator:
+    def __init__(self, rdf_converter):
+        #start_time = time.time()
+    
+        self.rdf_converter = rdf_converter  # Initialize RDFConverter
+        self.shacl_graph = None
+        self.existing_graph = Graph()
+        script_dir = os.path.dirname(__file__)  # Get the script's directory
+        self.ttl_file_path = os.path.join(script_dir, 'output.ttl')  # Path to the TTL file
+        self.existing_graph_loaded = False  # Initialize the flag to track if the existing graph is loaded
+        self._initialize_existing_graph()  # Initialize the existing graph when the class is instantiated
+        self.validated_transactions = set()
+        self.create_shape_cache = set() 
+        # end_time = time.time()
+        # logging.info(f"Time taken to __init__: {end_time - start_time} seconds")
+
+    def _initialize_existing_graph(self):
+        """Helper function to load or create the TTL file."""
+        #start_time = time.time()
+    
+        if os.path.exists(self.ttl_file_path):
+            try:
+                self.existing_graph.parse(self.ttl_file_path, format='turtle')
+                self.existing_graph_loaded = True  # Set the flag to True when the graph is loaded
+                #logging.info("Existing TTL graph loaded successfully.")
+            except Exception as e:
+                logging.error(f"Error loading existing TTL file at {self.ttl_file_path}: {e}")
+                # end_time = time.time()
+                # logging.info(f"Time _initialize_existing_graph Iff: {end_time - start_time} seconds")
+        else:
+            # Create the file if it doesn't exist
+            try:
+                with open(self.ttl_file_path, 'w', encoding='utf-8') as f:
+                    pass  # Create an empty file to initialize it
+                self.existing_graph_loaded = True  # Set the flag to True after creating the file
+                #logging.info(f"Created new empty TTL file at {self.ttl_file_path}")
+            except Exception as e:
+                logging.error(f"Error creating the TTL file at {self.ttl_file_path}: {e}")
+                # end_time = time.time()
+                # logging.info(f"_initialize_existing_graph Else: {end_time - start_time} seconds")    
+
+    def load_shacl_graph(self, shacl_file_path):
+        """Load SHACL graph once."""
+        #start_time = time.time()
+    
+        if self.shacl_graph is None:
+            try:
+                
+                self.shacl_graph = Graph()
+                self.shacl_graph.parse(shacl_file_path, format='turtle')
+                
+            except Exception as e:
+                logging.error(f"Error loading SHACL file at {shacl_file_path}: {e}")
+        # end_time = time.time()
+        # logging.info(f"Time taken to validate shape: {end_time - start_time} seconds")
+    def update_existing_graph(self, new_graph):
+        #start_time = time.time()
+    
+        """Update the existing graph with new graph data and append to file."""
+        try:
+            self.existing_graph += new_graph
+            ttl_data = new_graph.serialize(format='turtle').decode('utf-8')
+            with open(self.ttl_file_path, 'a', encoding='utf-8') as turtle_file:
+                turtle_file.write(ttl_data)  # Append the new RDF data
+            # logging.info(f"Successfully appended validated graph to {self.ttl_file_path}")
+            # end_time = time.time()
+            # logging.info(f"Time taken to update_existing_graph: {end_time - start_time} seconds")
+        except Exception as e:
+            logging.error(f"Error updating TTL file at {self.ttl_file_path}: {e}")
+
+    def validate_shape(self, json_data):
+        
+
+        """Validate the shape of the incoming JSON data."""
+        try:
+            transaction_id = json_data["transaction_id"]
+            if not self.shacl_graph or not self.existing_graph_loaded:
+                raise Exception("SHACL or existing graph not loaded properly. Call initialize_graphs first.")
+
+            # Convert the incoming JSON data to RDF format using caching
+            rdf_graph = self.rdf_converter.convert_json_to_rdf(json_data, transaction_config)
+
+            # Validate the new RDF graph against the existing graph (without combining them)
+            #start_time = time.time()
+            conforms, results_graph, results_text = validate(
+                data_graph=rdf_graph,
+                shacl_graph=self.shacl_graph,
+                inference=None,
+                debug=True
+            )
+            # end_time = time.time()
+            # logging.info(f"Time taken to validate and update the graph: {end_time - start_time} seconds")
+            if conforms:
+                #logging.info("Validation successful")
+                
+               
+                self.update_existing_graph(rdf_graph)  # Assuming this is needed for persistence
+                self.validated_transactions.add(transaction_id) #not optimized
+                
+                return True
+            else:
+                # logging.error("Validation failed")
+                # end_time = time.time()
+                # logging.info(f"Time taken to validate shape ERROR: {end_time - start_time} seconds")
+                return False
+        except Exception as e:
+            #logging.error(f"Error during shape validation: {e}")
+            return False
+
+
+def initialize_graphs(shacl_file_path, shacl_validator):
+    """Initialize SHACL and existing graphs."""
+    #start_time = time.time()
+
+    # Only initialize if not already done
+    if shacl_validator.shacl_graph is None:
+        shacl_validator.load_shacl_graph(shacl_file_path)
+    if not shacl_validator.existing_graph_loaded:
+        shacl_validator._initialize_existing_graph()  # Using the private method to load or create the graph
+
+    # end_time = time.time()
+    # logging.info(f"Time taken to initialize graphs: {end_time - start_time} seconds")
+
+
+# Initialize RDFConverter and SHACLValidator
+rdf_converter = RDFConverter()  # Ensure you have the RDFConverter class or import it
+shacl_validator = SHACLValidator(rdf_converter)
+shacl_file_path = os.path.join(os.path.dirname(__file__), 'shacl_shape.ttl')
+
+# Initialize SHACL and existing graphs once at the start
+initialize_graphs(shacl_file_path, shacl_validator)
 
 class Input(object):
     """A Input is used to spend assets locked by an Output.
@@ -532,11 +903,12 @@ class Transaction(object):
     BID = "BID"
     ACCEPT = "ACCEPT"
     RETURN = "RETURN"
-    ADVERTISEMENT = "ADVERTISEMENT"
-    BUY_OFFER = "BUY_OFFER"
+    BUYOFFER = "BUYOFFER"
+    ADV = "ADV" 
     SELL = "SELL"
-    REQUEST_RETURN = "REQUEST_RETURN"
+    INVERSE_TXN = "INVERSE_TXN"
     ACCEPT_RETURN = "ACCEPT_RETURN"
+    UPDATE_ADV = "UPDATE_ADV" 
     ALLOWED_OPERATIONS = (
         CREATE,
         TRANSFER,
@@ -546,11 +918,12 @@ class Transaction(object):
         BID,
         ACCEPT,
         RETURN,
-        ADVERTISEMENT,
-        BUY_OFFER,
+        BUYOFFER,
+        ADV, 
         SELL,
-        REQUEST_RETURN,
+        INVERSE_TXN,
         ACCEPT_RETURN,
+        UPDATE_ADV,
     )
     VERSION = "2.0"
 
@@ -592,7 +965,7 @@ class Transaction(object):
         # dicts holding a `data` property. Asset payloads for 'TRANSFER'
         # operations must be dicts holding an `id` property.
         if (
-            (operation == self.CREATE or operation == self.BID)
+            (operation == self.CREATE or operation == self.BID or operation == self.BUYOFFER or operation == self.SELL or operation == self.PRE_REQUEST or operation == self.INTEREST)
             and asset is not None
             and not (isinstance(asset, dict) and "data" in asset)
         ):
@@ -613,9 +986,13 @@ class Transaction(object):
             )
         elif (
             (
-                operation == self.PRE_REQUEST
-                or operation == self.REQUEST_FOR_QUOTE
+                # operation == self.PRE_REQUEST
+                # or 
+                operation == self.REQUEST_FOR_QUOTE
                 or operation == self.ACCEPT
+                or operation == self.ADV
+                or operation == self.UPDATE_ADV
+                
             )
             and asset is not None
             and not (isinstance(asset, dict))
@@ -626,58 +1003,13 @@ class Transaction(object):
                     "for 'REQUEST_FOR_QUOTE' Transactions".format(operation)
                 )
             )
-        elif (operation == self.INTEREST or operation == self.BID) and not (
+        elif (operation == self.INTEREST or operation == self.BID  or operation == self.BUYOFFER or operation == self.SELL or operation == self.PRE_REQUEST ) and not (
             isinstance(asset, dict)
         ):
             raise TypeError(
                 (
                     "`asset` must be a dict holding an `id` property  "
                     "for 'INTEREST' Transactions".format(operation)
-                )
-            )
-        elif operation == self.ADVERTISEMENT and not (
-            isinstance(asset, dict) and "id" in asset
-        ):
-            raise TypeError(
-                (
-                    "`asset` must be a dict holding an `id` property "
-                    "for 'ADVERTISEMENT' Transactions".format(operation)
-                )
-            )
-        elif operation == self.BUY_OFFER and not (
-            isinstance(asset, dict) and "id" in asset and "advertisement_id" in asset
-        ):
-            raise TypeError(
-                (
-                    "`asset` must be a dict holding `id` and `advertisement_id` properties "
-                    "for 'BUY_OFFER' Transactions".format(operation)
-                )
-            )
-        elif operation == self.SELL and not (
-            isinstance(asset, dict) and "id" in asset and "buy_offer_id" in asset
-        ):
-            raise TypeError(
-                (
-                    "`asset` must be a dict holding `id` and `buy_offer_id` properties "
-                    "for 'SELL' Transactions".format(operation)
-                )
-            )
-        elif operation == self.REQUEST_RETURN and not (
-            isinstance(asset, dict) and "id" in asset and "sell_transaction_id" in asset
-        ):
-            raise TypeError(
-                (
-                    "`asset` must be a dict holding `id` and `sell_transaction_id` properties "
-                    "for 'REQUEST_RETURN' Transactions".format(operation)
-                )
-            )
-        elif operation == self.ACCEPT_RETURN and not (
-            isinstance(asset, dict) and "id" in asset and "request_return_id" in asset
-        ):
-            raise TypeError(
-                (
-                    "`asset` must be a dict holding `id` and `request_return_id` properties "
-                    "for 'ACCEPT_RETURN' Transactions".format(operation)
                 )
             )
 
@@ -698,7 +1030,7 @@ class Transaction(object):
         self.metadata = metadata
         self._id = hash_id
         self.tx_dict = tx_dict
-
+        self.open_advertisements = {}
     @property
     def unspent_outputs(self):
         """UnspentOutput: The outputs of this transaction, in a data
@@ -709,18 +1041,8 @@ class Transaction(object):
             self._asset_id = self._id
         elif self.operation == self.TRANSFER:
             self._asset_id = self.asset["id"]
-        elif self.operation == self.INTEREST:
-            self._asset_id = self.asset["id"]
-        elif self.operation == self.ADVERTISEMENT:
-            self._asset_id = self.asset["id"]
-        elif self.operation == self.BUY_OFFER:
-            self._asset_id = self.asset["id"]
-        elif self.operation == self.SELL:
-            self._asset_id = self.asset["id"]
-        elif self.operation == self.REQUEST_RETURN:
-            self._asset_id = self.asset["id"]
-        elif self.operation == self.ACCEPT_RETURN:
-            self._asset_id = self.asset["id"]
+        # elif self.operation == self.INTEREST:
+        #     self._asset_id = self.asset["id"]
         # FIXME: Add PRE_REQUEST, INTEREST, and BID-ACCEPT
         return (
             UnspentOutput(
@@ -843,6 +1165,7 @@ class Transaction(object):
         if not isinstance(asset_id, str):
             raise TypeError("`asset_id` must be a string")
 
+        
         return (deepcopy(inputs), outputs)
 
     @classmethod
@@ -888,387 +1211,6 @@ class Transaction(object):
             inputs, recipients, asset_id, metadata
         )
         return cls(cls.TRANSFER, {"id": asset_id}, inputs, outputs, metadata)
-
-    @classmethod
-    def validate_advertisement(cls, inputs, asset_id, metadata):
-        """Validate advertisement transaction inputs and metadata.
-        
-        Args:
-            inputs: List of inputs (must be exactly one)
-            asset_id: The asset ID to advertise
-            metadata: Metadata containing status, advertiser_public_key, etc.
-            
-        Returns:
-            tuple: (inputs, outputs) where outputs is empty for advertisement
-        """
-        if not isinstance(inputs, list):
-            raise TypeError("`inputs` must be a list instance")
-        if len(inputs) != 1:
-            raise ValueError("`inputs` must contain exactly one item for advertisement")
-        
-        if not isinstance(asset_id, str):
-            raise TypeError("`asset_id` must be a string")
-            
-        if not isinstance(metadata, dict):
-            raise TypeError("`metadata` must be a dict")
-            
-        # Validate required metadata fields
-        required_fields = ['status', 'advertiser_public_key']
-        for field in required_fields:
-            if field not in metadata:
-                raise ValueError(f"`metadata` must contain '{field}' field")
-                
-        # Validate status
-        valid_statuses = ['OPEN', 'LOCKED', 'CLOSED']
-        if metadata['status'] not in valid_statuses:
-            raise ValueError(f"`status` must be one of {valid_statuses}")
-            
-        # Validate advertiser public key format
-        if not isinstance(metadata['advertiser_public_key'], str):
-            raise TypeError("`advertiser_public_key` must be a string")
-            
-        # For new advertisements, status must be OPEN
-        if metadata.get('is_new_advertisement', True) and metadata['status'] != 'OPEN':
-            raise ValueError("New advertisement status must be 'OPEN'")
-            
-        return (deepcopy(inputs), [])
-
-    @classmethod
-    def advertisement(cls, inputs, asset_id, metadata=None):
-        """A simple way to generate an `ADVERTISEMENT` transaction.
-        
-        Args:
-            inputs: List of inputs (must be exactly one)
-            asset_id: The asset ID to advertise
-            metadata: Metadata containing advertisement details
-            
-        Returns:
-            :class:`~bigchaindb.common.transaction.Transaction`
-        """
-        if metadata is None:
-            metadata = {}
-            
-        # Set default status to OPEN for new advertisements
-        if 'status' not in metadata:
-            metadata['status'] = 'OPEN'
-        metadata['is_new_advertisement'] = True
-            
-        (inputs, outputs) = cls.validate_advertisement(inputs, asset_id, metadata)
-        return cls(cls.ADVERTISEMENT, {"id": asset_id}, inputs, outputs, metadata)
-
-    @classmethod
-    def validate_buy_offer(cls, inputs, asset_id, advertisement_id, metadata):
-        """Validate buy offer transaction inputs and metadata.
-        
-        Args:
-            inputs: List of inputs for the buy offer (must include buyer's payment asset)
-            asset_id: The asset ID being offered for
-            advertisement_id: The advertisement ID being responded to
-            metadata: Metadata containing buyer details, offer amount, etc.
-            
-        Returns:
-            tuple: (inputs, outputs) where outputs include escrow transfer
-            
-        Raises:
-            ValueError: If validation fails
-        """
-        if not inputs:
-            raise ValueError("`inputs` must contain at least one item")
-            
-        if not isinstance(asset_id, str):
-            raise TypeError("`asset_id` must be a string")
-            
-        if not isinstance(advertisement_id, str):
-            raise TypeError("`advertisement_id` must be a string")
-            
-        if not metadata:
-            raise ValueError("`metadata` is required for buy offer")
-            
-        # Validate required metadata fields
-        required_fields = ['buyer_public_key', 'offer_amount', 'offer_currency', 
-                          'offer_timestamp', 'offer_expiry', 'escrow_public_key']
-        for field in required_fields:
-            if field not in metadata:
-                raise ValueError(f"`metadata` must contain '{field}'")
-                
-        # Validate offer amount
-        if metadata['offer_amount'] <= 0:
-            raise ValueError("`offer_amount` must be positive")
-            
-        # Validate offer expiry
-        from datetime import datetime
-        try:
-            # Python 3.6 compatible datetime parsing
-            expiry_str = metadata['offer_expiry'].replace('Z', '+00:00')
-            # Remove microseconds for simpler parsing
-            if '.' in expiry_str:
-                base_part = expiry_str.split('.')[0]
-                timezone_part = expiry_str.split('+')[1] if '+' in expiry_str else ''
-                expiry_str = base_part + ('+' + timezone_part if timezone_part else '')
-            
-            # Parse without timezone first, then add UTC timezone
-            expiry = datetime.strptime(expiry_str.split('+')[0], '%Y-%m-%dT%H:%M:%S')
-            # Add UTC timezone info
-            from datetime import timezone
-            expiry = expiry.replace(tzinfo=timezone.utc)
-                
-            if expiry <= datetime.utcnow().replace(tzinfo=timezone.utc):
-                raise ValueError("`offer_expiry` must be in the future")
-        except ValueError as e:
-            raise ValueError(f"Invalid `offer_expiry` format: {e}")
-            
-        # Create outputs for the buy offer:
-        # 1. Asset being offered for (referenced by asset_id) - no change in ownership
-        # 2. Buyer's payment asset transferred to escrow account
-        escrow_output = Output(
-            amount=int(metadata['offer_amount']),
-            fulfillment=Ed25519Sha256(public_key=base58.b58decode(metadata['escrow_public_key'])),
-            public_keys=[metadata['escrow_public_key']]
-        )
-        
-        outputs = [escrow_output]
-        
-        return (inputs, outputs)
-
-    @classmethod
-    def buy_offer(cls, inputs, asset_id, advertisement_id, metadata=None):
-        """A simple way to generate a `BUY_OFFER` transaction.
-        
-        Args:
-            inputs: List of inputs (must be exactly one)
-            asset_id: The asset ID being offered for
-            advertisement_id: The advertisement ID being responded to
-            metadata: Metadata containing buyer details, offer amount, etc.
-            
-        Returns:
-            :class:`~bigchaindb.common.transaction.Transaction`
-        """
-        if metadata is None:
-            metadata = {}
-            
-        (inputs, outputs) = cls.validate_buy_offer(inputs, asset_id, advertisement_id, metadata)
-        return cls(cls.BUY_OFFER, {"id": asset_id, "advertisement_id": advertisement_id}, inputs, outputs, metadata)
-
-    @classmethod
-    def validate_sell(cls, inputs, asset_id, buy_offer_id, metadata):
-        """Validate sell transaction inputs and metadata.
-        
-        Args:
-            inputs: List of inputs for the sell transaction
-            asset_id: The asset ID being sold
-            buy_offer_id: The buy offer ID being accepted
-            metadata: Metadata containing seller details, sale amount, etc.
-            
-        Returns:
-            tuple: (inputs, outputs) where outputs include asset and payment transfers
-            
-        Raises:
-            ValueError: If validation fails
-        """
-        if not inputs:
-            raise ValueError("`inputs` must contain at least one item")
-            
-        if not isinstance(asset_id, str):
-            raise TypeError("`asset_id` must be a string")
-            
-        if not isinstance(buy_offer_id, str):
-            raise TypeError("`buy_offer_id` must be a string")
-            
-        if not metadata:
-            raise ValueError("`metadata` is required for sell transaction")
-            
-        # Validate required metadata fields
-        required_fields = ['seller_public_key', 'buyer_public_key', 'sale_amount', 'sale_currency']
-        for field in required_fields:
-            if field not in metadata:
-                raise ValueError(f"`metadata` must contain '{field}'")
-                
-        # Validate sale amount
-        if metadata['sale_amount'] <= 0:
-            raise ValueError("`sale_amount` must be positive")
-            
-        # Create outputs for the two atomic transfers:
-        # 1. Asset transfer to buyer (the asset being sold)
-        asset_output = Output(
-            amount=1,  # Asset quantity
-            fulfillment=Ed25519Sha256(public_key=base58.b58decode(metadata['buyer_public_key'])),
-            public_keys=[metadata['buyer_public_key']]
-        )
-        
-        # 2. Payment transfer to seller (from escrow)
-        payment_output = Output(
-            amount=int(metadata['sale_amount']),
-            fulfillment=Ed25519Sha256(public_key=base58.b58decode(metadata['seller_public_key'])),
-            public_keys=[metadata['seller_public_key']]
-        )
-        
-        outputs = [asset_output, payment_output]
-        
-        return (inputs, outputs)
-
-    @classmethod
-    def sell(cls, inputs, asset_id, buy_offer_id, metadata=None):
-        """A simple way to generate a `SELL` transaction.
-        
-        Args:
-            inputs: List of inputs (must be exactly one)
-            asset_id: The asset ID being sold
-            buy_offer_id: The buy offer ID being accepted
-            metadata: Metadata containing seller details, sale amount, etc.
-            
-        Returns:
-            :class:`~bigchaindb/common.transaction.Transaction`
-        """
-        if metadata is None:
-            metadata = {}
-            
-        (inputs, outputs) = cls.validate_sell(inputs, asset_id, buy_offer_id, metadata)
-        return cls(cls.SELL, {"id": asset_id, "buy_offer_id": buy_offer_id}, inputs, outputs, metadata)
-
-    @classmethod
-    def validate_request_return(cls, inputs, asset_id, sell_transaction_id, metadata):
-        """Validate request return transaction inputs and metadata.
-        
-        Args:
-            inputs: List of inputs (must be exactly one)
-            asset_id: The asset ID being returned
-            sell_transaction_id: The sell transaction ID being disputed
-            metadata: Metadata containing return request details
-            
-        Returns:
-            tuple: (inputs, outputs) where outputs is empty for request return
-        """
-        if not isinstance(inputs, list):
-            raise TypeError("`inputs` must be a list instance")
-        if len(inputs) != 1:
-            raise ValueError("`inputs` must contain exactly one item for request return")
-        
-        if not isinstance(asset_id, str):
-            raise TypeError("`asset_id` must be a string")
-            
-        if not isinstance(sell_transaction_id, str):
-            raise TypeError("`sell_transaction_id` must be a string")
-            
-        if not isinstance(metadata, dict):
-            raise TypeError("`metadata` must be a dict")
-            
-        # Validate required metadata fields
-        required_fields = ['requester_public_key', 'return_reason', 
-                          'return_request_timestamp', 'return_policy_details']
-        for field in required_fields:
-            if field not in metadata:
-                raise ValueError(f"`metadata` must contain '{field}' field")
-                
-        # Validate return reason
-        if not isinstance(metadata['return_reason'], str) or len(metadata['return_reason']) == 0:
-            raise ValueError("`return_reason` must be a non-empty string")
-            
-        # Validate return request timestamp
-        if not isinstance(metadata['return_request_timestamp'], str):
-            raise ValueError("`return_request_timestamp` must be a string")
-            
-        # Validate return policy details
-        if not isinstance(metadata['return_policy_details'], dict):
-            raise ValueError("`return_policy_details` must be a dict")
-                
-        return (deepcopy(inputs), [])
-
-    @classmethod
-    def request_return(cls, inputs, asset_id, sell_transaction_id, metadata=None):
-        """A simple way to generate a `REQUEST_RETURN` transaction.
-        
-        Args:
-            inputs: List of inputs (must be exactly one)
-            asset_id: The asset ID being returned
-            sell_transaction_id: The sell transaction ID being disputed
-            metadata: Metadata containing return request details
-            
-        Returns:
-            :class:`~bigchaindb/common.transaction.Transaction`
-        """
-        if metadata is None:
-            metadata = {}
-            
-        # Set default return status to PENDING
-        if 'return_policy_details' not in metadata:
-            metadata['return_policy_details'] = {}
-        if 'return_status' not in metadata['return_policy_details']:
-            metadata['return_policy_details']['return_status'] = 'PENDING'
-            
-        (inputs, outputs) = cls.validate_request_return(inputs, asset_id, sell_transaction_id, metadata)
-        return cls(cls.REQUEST_RETURN, {"id": asset_id, "sell_transaction_id": sell_transaction_id}, inputs, outputs, metadata)
-
-    @classmethod
-    def validate_accept_return(cls, inputs, asset_id, request_return_id, metadata):
-        """Validate accept return transaction inputs and metadata.
-        
-        Args:
-            inputs: List of inputs (must be exactly one)
-            asset_id: The asset ID being returned
-            request_return_id: The request return transaction ID being accepted
-            metadata: Metadata containing return acceptance details
-            
-        Returns:
-            tuple: (inputs, outputs) where outputs is empty for accept return
-        """
-        if not isinstance(inputs, list):
-            raise TypeError("`inputs` must be a list instance")
-        if len(inputs) != 1:
-            raise ValueError("`inputs` must contain exactly one item for accept return")
-        
-        if not isinstance(asset_id, str):
-            raise TypeError("`asset_id` must be a string")
-            
-        if not isinstance(request_return_id, str):
-            raise TypeError("`request_return_id` must be a string")
-            
-        if not isinstance(metadata, dict):
-            raise TypeError("`metadata` must be a dict")
-            
-        # Validate required metadata fields
-        required_fields = ['accepter_public_key', 'return_acceptance_timestamp', 
-                          'refund_details', 'return_processing_notes']
-        for field in required_fields:
-            if field not in metadata:
-                raise ValueError(f"`metadata` must contain '{field}' field")
-                
-        # Validate refund details
-        if not isinstance(metadata['refund_details'], dict):
-            raise ValueError("`refund_details` must be a dict")
-            
-        refund_required_fields = ['refund_amount', 'refund_currency', 'refund_method']
-        for field in refund_required_fields:
-            if field not in metadata['refund_details']:
-                raise ValueError(f"`refund_details` must contain '{field}' field")
-                
-        # Validate return acceptance timestamp
-        if not isinstance(metadata['return_acceptance_timestamp'], str):
-            raise ValueError("`return_acceptance_timestamp` must be a string")
-            
-        # Validate return processing notes
-        if not isinstance(metadata['return_processing_notes'], str):
-            raise ValueError("`return_processing_notes` must be a string")
-                
-        return (deepcopy(inputs), [])
-
-    @classmethod
-    def accept_return(cls, inputs, asset_id, request_return_id, metadata=None):
-        """A simple way to generate a `ACCEPT_RETURN` transaction.
-        
-        Args:
-            inputs: List of inputs (must be exactly one)
-            asset_id: The asset ID being returned
-            request_return_id: The request return transaction ID being accepted
-            metadata: Metadata containing return acceptance details
-            
-        Returns:
-            :class:`~bigchaindb/common.transaction.Transaction`
-        """
-        if metadata is None:
-            metadata = {}
-            
-        (inputs, outputs) = cls.validate_accept_return(inputs, asset_id, request_return_id, metadata)
-        return cls(cls.ACCEPT_RETURN, {"id": asset_id, "request_return_id": request_return_id}, inputs, outputs, metadata)
 
     def __eq__(self, other):
         try:
@@ -1534,17 +1476,24 @@ class Transaction(object):
         else:"""
         if self.operation in [
             self.CREATE,
-            self.PRE_REQUEST,
+            #self.PRE_REQUEST,
             self.REQUEST_FOR_QUOTE,
-            self.INTEREST,
+            #self.INTEREST,
             self.ACCEPT,
+            self.ADV,
+            self.UPDATE_ADV,
+            
         ]:
             # NOTE: Since in the case of a `CREATE`-transaction we do not have
             #       to check for outputs, we're just submitting dummy
             #       values to the actual method. This simplifies it's logic
             #       greatly, as we do not have to check against `None` values.
+            #This part should comment if not shacl validation
+            if(self.operation == self.CREATE):
+                self.generateShape()
+            #end comment area    
             return self._inputs_valid(["dummyvalue" for _ in self.inputs])
-        elif self.operation in [self.TRANSFER, self.BID, self.RETURN]:
+        elif self.operation in [self.TRANSFER, self.BID, self.RETURN, self.BUYOFFER, self.SELL, self.INTEREST, self.PRE_REQUEST]:
             return self._inputs_valid(
                 [output.fulfillment.condition_uri for output in outputs]
             )
@@ -1612,10 +1561,12 @@ class Transaction(object):
 
         if operation in [
             self.CREATE,
-            self.PRE_REQUEST,
+            #self.PRE_REQUEST,
             self.REQUEST_FOR_QUOTE,
-            self.INTEREST,
+            #self.INTEREST,
             self.ACCEPT,
+            self.ADV,
+            self.UPDATE_ADV,
         ]:
             # NOTE: In the case of a `CREATE` transaction, the
             #       output is always valid.
@@ -1757,7 +1708,7 @@ class Transaction(object):
         # create a set of the transactions' asset ids
         asset_ids = set()
         for tx in transactions:
-            if tx.operation in [tx.CREATE, tx.BID]:
+            if tx.operation in [tx.CREATE, tx.BID, tx.BUYOFFER, tx.SELL, tx.PRE_REQUEST, tx.INTEREST, tx.ACCEPT_RETURN]: 
                 asset_id = tx.id
             else:
                 asset_id = tx.asset["id"]
@@ -1891,12 +1842,15 @@ class Transaction(object):
     @staticmethod
     def register_type(tx_type, tx_class):
         Transaction.type_registry[tx_type] = tx_class
+        
+
 
     @staticmethod
     def resolve_class(operation):
         """For the given `tx` based on the `operation` key return its
         implementation class"""
         create_txn_class = Transaction.type_registry.get(Transaction.CREATE)
+        
         return Transaction.type_registry.get(operation, create_txn_class)
 
     @classmethod
@@ -1905,6 +1859,7 @@ class Transaction(object):
 
     def validate_transfer_inputs(self, bigchain, current_transactions=[]):
         # store the inputs so that we can check if the asset ids match
+        
         input_txs = []
         input_conditions = []
         for input_ in self.inputs:
@@ -1918,13 +1873,19 @@ class Transaction(object):
 
             if input_tx is None:
                 raise InputDoesNotExist("input `{}` doesn't exist".format(input_txid))
-
-            spent = bigchain.get_spent(
-                input_txid, input_.fulfills.output, current_transactions
-            )
-            if spent:
-                raise DoubleSpend("input `{}` was already spent".format(input_txid))
-
+            #This part should comment in case of shacl validation
+            # if self.operation == Transaction.PRE_REQUEST:
+            #     # Implement is_returned logic in the bigchain instance
+            #     if bigchain.is_asset_returned(input_txid):
+            #         raise DoubleSpend("Input transaction `{}` has already been returned".format(input_txid))
+            # else:
+            
+            #     spent = bigchain.get_spent(
+            #         input_txid, input_.fulfills.output, current_transactions
+            #     )
+            #     if spent:
+            #         raise DoubleSpend("input `{}` was already spent".format(input_txid))
+            #end comment area
             output = input_tx.outputs[input_.fulfills.output]
             input_conditions.append(output)
             input_txs.append(input_tx)
@@ -1935,13 +1896,47 @@ class Transaction(object):
             raise DoubleSpend('tx "{}" spends inputs twice'.format(self.id))
 
         # validate asset id
+        
         asset_id = self.get_asset_id(input_txs)
+        
+        #if self.operation == self.TRANSFER:
+            # comment if shacl
+            # adv_list = bigchain.get_adv_txids_for_asset(asset_id)
+            # adv_txs = []
+            # for adv_tx_id in adv_list:
+            #     adv_tx = bigchain.get_transaction(adv_tx_id)
+            #     if adv_tx.asset["data"]["status"] != "open":
+            #         raise ValidationError(
+            #             "The asset has an Open ADV, Transfer is not allowed".format(
+            #             adv_tx_id
+            #         )
+            #         )       
+            #end comment
+            ##This part should comment if not shacl   
+            
+            # json_data_transfer = {
+            #     "asset_ref": asset_id,
+            #     "transaction_id": self.id,
+            #     "operation": self.operation,
+            #     "spend": asset_id,
+            # }
+            
+            
+            # script_dir = os.path.dirname(__file__)
+            
+            # shacl_file_path = os.path.join(script_dir, 'shacl_shape.ttl')
+            
+            #shacl_validator.validate_shape(json_data_transfer)
+            ##end   
 
         tx_asset_id = ""
-        if self.operation == self.BID:
+        if self.operation == self.BID or self.operation == self.BUYOFFER:
             tx_asset_id = self.asset["data"]["id"]
         elif self.operation == self.RETURN:
             tx_asset_id = self.asset["data"]["bid_id"]
+        elif self.operation == self.ACCEPT_RETURN or self.operation == self.INTEREST or self.operation == self.PRE_REQUEST or self.operation == self.SELL:
+            tx_asset_id = self.asset["data"]["asset_id"]
+        
         else:
             tx_asset_id = self.asset["id"]
 
@@ -1970,591 +1965,6 @@ class Transaction(object):
                 ).format(input_amount, output_amount)
             )
 
-        if not self.inputs_valid(input_conditions):
-            raise InvalidSignature("Transaction signature is invalid.")
-
-        return True
-
-    def validate_advertisement_inputs(self, bigchain, current_transactions=[]):
-        """Validate advertisement transaction inputs according to business rules.
-        
-        Validation rules:
-        1. References exactly one existing asset
-        2. Advertiser is current owner of that asset at validation time
-        3. Status must be OPEN, LOCKED, or CLOSED
-        4. No other OPEN ad exists for the same asset
-        5. Asset is transferable, not escrowed/locked
-        
-        Args:
-            bigchain: BigchainDB instance for database queries
-            current_transactions: List of current uncommitted transactions
-            
-        Returns:
-            bool: True if validation passes
-            
-        Raises:
-            Various validation errors if rules are violated
-        """
-        # Validate exactly one input
-        if len(self.inputs) != 1:
-            raise ValueError("Advertisement must have exactly one input")
-            
-        input_ = self.inputs[0]
-        input_txid = input_.fulfills.txid
-        input_tx = bigchain.get_transaction(input_txid)
-
-        if input_tx is None:
-            for ctxn in current_transactions:
-                if ctxn.id == input_txid:
-                    input_tx = ctxn
-
-        if input_tx is None:
-            raise InputDoesNotExist("input `{}` doesn't exist".format(input_txid))
-
-        # Check if input is already spent
-        spent = bigchain.get_spent(
-            input_txid, input_.fulfills.output, current_transactions
-        )
-        if spent:
-            raise DoubleSpend("input `{}` was already spent".format(input_txid))
-
-        # Get the output being referenced
-        output = input_tx.outputs[input_.fulfills.output]
-        input_conditions = [output]
-        input_txs = [input_tx]
-
-        # Validate asset ID consistency
-        asset_id = self.get_asset_id(input_txs)
-        tx_asset_id = self.asset["id"]
-
-        if asset_id != tx_asset_id:
-            raise AssetIdMismatch(
-                "The asset id of the input does not match the asset id of the transaction"
-            )
-
-        # Validate that advertiser owns the asset
-        advertiser_pub_key = self.metadata.get('advertiser_public_key')
-        if not advertiser_pub_key:
-            raise ValueError("Advertisement metadata must contain advertiser_public_key")
-            
-        # Check if advertiser is in the owners_before list of the input
-        if advertiser_pub_key not in output.public_keys:
-            raise ValueError("Advertiser must be the current owner of the asset")
-
-        # Validate signature
-        if not self.inputs_valid(input_conditions):
-            raise InvalidSignature("Transaction signature is invalid.")
-
-        # Check if asset is already advertised (only for new advertisements)
-        if self.metadata.get('is_new_advertisement', False):
-            # Query for existing OPEN advertisements for this asset
-            existing_ads = bigchain.get_transactions_filtered(
-                asset_id=asset_id, 
-                operation='ADVERTISEMENT'
-            )
-            
-            for existing_ad in existing_ads:
-                if existing_ad.metadata and existing_ad.metadata.get('status') == 'OPEN':
-                    raise ValueError(f"Asset {asset_id} already has an OPEN advertisement")
-
-        # Check if asset is transferable (not escrowed/locked)
-        # This would require additional logic to check asset state
-        # For now, we'll assume assets are transferable unless explicitly marked otherwise
-        
-        return True
-
-    def validate_buy_offer_inputs(self, bigchain, current_transactions=[]):
-        """Validate buy offer transaction inputs according to business rules.
-        
-        Validation rules:
-        1. References exactly one existing OPEN advertisement
-        2. References exactly one valid asset identifier
-        3. Buyer ≠ advertiser
-        4. Offer matches advertisement's policy and is within time
-        5. Buyer has sufficient funds to cover the offer amount
-        6. Buyer's payment asset is directly transferred to escrow account
-        
-        Args:
-            bigchain: BigchainDB instance for database queries
-            current_transactions: List of current uncommitted transactions
-            
-        Returns:
-            bool: True if validation passes
-            
-        Raises:
-            Various validation errors if rules are violated
-        """
-        # Validate exactly one input for the asset being offered for
-        if len(self.inputs) < 1:
-            raise ValueError("Buy offer must have at least one input")
-            
-        # First input should reference the asset being offered for
-        asset_input = self.inputs[0]
-        asset_input_txid = asset_input.fulfills.txid
-        asset_input_tx = bigchain.get_transaction(asset_input_txid)
-
-        if asset_input_tx is None:
-            for ctxn in current_transactions:
-                if ctxn.id == asset_input_txid:
-                    asset_input_tx = ctxn
-
-        if asset_input_tx is None:
-            raise InputDoesNotExist("asset input `{}` doesn't exist".format(asset_input_txid))
-
-        # Check if asset input is already spent
-        asset_spent = bigchain.get_spent(
-            asset_input_txid, asset_input.fulfills.output, current_transactions
-        )
-        if asset_spent:
-            raise DoubleSpend("asset input `{}` was already spent".format(asset_input_txid))
-
-        # Get the asset output being referenced
-        asset_output = asset_input_tx.outputs[asset_input.fulfills.output]
-        asset_input_conditions = [asset_output]
-        asset_input_txs = [asset_input_tx]
-
-        # Validate asset ID consistency
-        asset_id = self.get_asset_id(asset_input_txs)
-        tx_asset_id = self.asset["id"]
-
-        if asset_id != tx_asset_id:
-            raise AssetIdMismatch(
-                "The asset id of the input does not match the asset id of the transaction"
-            )
-
-        # Validate advertisement exists and is OPEN
-        advertisement_id = self.asset.get('advertisement_id')
-        if not advertisement_id:
-            raise ValueError("Buy offer must reference an advertisement")
-            
-        advertisement_tx = bigchain.get_transaction(advertisement_id)
-        if not advertisement_tx:
-            raise ValueError(f"Referenced advertisement {advertisement_id} does not exist")
-            
-        if advertisement_tx.operation != 'ADVERTISEMENT':
-            raise ValueError(f"Referenced transaction {advertisement_id} is not an advertisement")
-            
-        if advertisement_tx.metadata.get('status') != 'OPEN':
-            raise ValueError(f"Referenced advertisement {advertisement_id} is not OPEN")
-
-        # Validate buyer ≠ advertiser
-        buyer_pub_key = self.metadata.get('buyer_public_key')
-        advertiser_pub_key = advertisement_tx.metadata.get('advertiser_public_key')
-        
-        if buyer_pub_key == advertiser_pub_key:
-            raise ValueError("Buyer cannot be the same as advertiser")
-
-        # Validate offer is within time
-        from datetime import datetime
-        # Python 3.6 compatible datetime parsing
-        expiry_str = self.metadata.get('offer_expiry', '').replace('Z', '+00:00')
-        # Remove microseconds for simpler parsing
-        if '.' in expiry_str:
-            base_part = expiry_str.split('.')[0]
-            timezone_part = expiry_str.split('+')[1] if '+' in expiry_str else ''
-            expiry_str = base_part + ('+' + timezone_part if timezone_part else '')
-        
-        # Parse without timezone first, then add UTC timezone
-        offer_expiry = datetime.strptime(expiry_str.split('+')[0], '%Y-%m-%dT%H:%M:%S')
-        # Add UTC timezone info
-        from datetime import timezone
-        offer_expiry = offer_expiry.replace(tzinfo=timezone.utc)
-        current_time = datetime.utcnow()
-        
-        if current_time > offer_expiry:
-            raise ValueError("Offer has expired")
-
-        # Validate that buyer owns the asset being offered for
-        if buyer_pub_key not in asset_output.public_keys:
-            raise ValueError("Buyer must own the asset being offered for")
-
-        # Validate escrow public key
-        escrow_pub_key = self.metadata.get('escrow_public_key')
-        if not escrow_pub_key:
-            raise ValueError("Buy offer must specify escrow public key")
-
-        # Validate that outputs will be created for escrow transfer
-        if len(self.outputs) != 1:
-            raise ValueError("Buy offer must create exactly one output: escrow transfer")
-
-        # Validate escrow output amount matches offer amount
-        escrow_output = self.outputs[0]
-        if escrow_output.amount != self.metadata.get('offer_amount'):
-            raise ValueError("Escrow output amount must match offer amount")
-
-        # Validate escrow output is locked to escrow account
-        if escrow_pub_key not in escrow_output.public_keys:
-            raise ValueError("Escrow output must be locked to the specified escrow account")
-
-        # Validate signature for asset input
-        if not self.inputs_valid(asset_input_conditions):
-            raise InvalidSignature("Transaction signature is invalid for asset input.")
-
-        return True
-
-    def validate_sell_inputs(self, bigchain, current_transactions=[]):
-        """Validate sell transaction inputs according to business rules.
-        
-        Validation rules:
-        1. References exactly one existing BuyOffer
-        2. Offer targets an advertisement for the same asset
-        3. Seller = current owner and = advertiser
-        4. Ad is not already LOCKED or CLOSED
-        5. Buy offer has sufficient escrow funds
-        6. Executes two atomic transfer transactions: asset to buyer, payment to seller
-        
-        Args:
-            bigchain: BigchainDB instance for database queries
-            current_transactions: List of current uncommitted transactions
-            
-        Returns:
-            bool: True if validation passes
-            
-        Raises:
-            Various validation errors if rules are violated
-        """
-        # Validate exactly one input
-        if len(self.inputs) != 1:
-            raise ValueError("Sell transaction must have exactly one input")
-            
-        input_ = self.inputs[0]
-        input_txid = input_.fulfills.txid
-        input_tx = bigchain.get_transaction(input_txid)
-
-        if input_tx is None:
-            for ctxn in current_transactions:
-                if ctxn.id == input_txid:
-                    input_tx = ctxn
-
-        if input_tx is None:
-            raise InputDoesNotExist("input `{}` doesn't exist".format(input_txid))
-
-        # Check if input is already spent
-        spent = bigchain.get_spent(
-            input_txid, input_.fulfills.output, current_transactions
-        )
-        if spent:
-            raise DoubleSpend("input `{}` was already spent".format(input_txid))
-
-        # Get the output being referenced
-        output = input_tx.outputs[input_.fulfills.output]
-        input_conditions = [output]
-        input_txs = [input_tx]
-
-        # Validate asset ID consistency
-        asset_id = self.get_asset_id(input_txs)
-        tx_asset_id = self.asset["id"]
-
-        if asset_id != tx_asset_id:
-            raise AssetIdMismatch(
-                "The asset id of the input does not match the asset id of the transaction"
-            )
-
-        # Validate buy offer exists and references the same asset
-        buy_offer_id = self.asset.get('buy_offer_id')
-        if not buy_offer_id:
-            raise ValueError("Sell transaction must reference a buy offer")
-            
-        buy_offer_tx = bigchain.get_transaction(buy_offer_id)
-        if not buy_offer_tx:
-            raise ValueError(f"Referenced buy offer {buy_offer_id} does not exist")
-            
-        if buy_offer_tx.operation != 'BUY_OFFER':
-            raise ValueError(f"Referenced transaction {buy_offer_id} is not a buy offer")
-            
-        if buy_offer_tx.asset.get('id') != asset_id:
-            raise ValueError(f"Buy offer targets different asset than sell transaction")
-
-        # Get the advertisement from the buy offer
-        advertisement_id = buy_offer_tx.asset.get('advertisement_id')
-        advertisement_tx = bigchain.get_transaction(advertisement_id)
-        
-        if not advertisement_tx:
-            raise ValueError(f"Referenced advertisement {advertisement_id} does not exist")
-
-        # Validate seller = current owner and = advertiser
-        seller_pub_key = self.metadata.get('seller_public_key')
-        advertiser_pub_key = advertisement_tx.metadata.get('advertiser_public_key')
-        
-        if seller_pub_key != advertiser_pub_key:
-            raise ValueError("Seller must be the advertiser")
-            
-        if seller_pub_key not in output.public_keys:
-            raise ValueError("Seller must be the current owner of the asset")
-
-        # Validate ad is not already LOCKED or CLOSED
-        ad_status = advertisement_tx.metadata.get('status')
-        if ad_status in ['LOCKED', 'CLOSED']:
-            raise ValueError(f"Cannot sell asset with advertisement status {ad_status}")
-
-        # Validate buy offer has sufficient escrow funds
-        buy_offer_amount = buy_offer_tx.metadata.get('offer_amount')
-        sale_amount = self.metadata.get('sale_amount')
-        
-        if sale_amount > buy_offer_amount:
-            raise ValueError("Sale amount cannot exceed buy offer amount")
-
-        # Validate buyer public key is provided for asset transfer
-        buyer_pub_key = self.metadata.get('buyer_public_key')
-        if not buyer_pub_key:
-            raise ValueError("Sell transaction must specify buyer public key for asset transfer")
-            
-        # Validate buyer public key matches the one from buy offer
-        buy_offer_buyer = buy_offer_tx.metadata.get('buyer_public_key')
-        if buyer_pub_key != buy_offer_buyer:
-            raise ValueError("Buyer public key must match the one from buy offer")
-
-        # Validate that outputs will be created for both transfers
-        if len(self.outputs) != 2:
-            raise ValueError("Sell transaction must create exactly two outputs: asset transfer and payment transfer")
-
-        # Validate signature
-        if not self.inputs_valid(input_conditions):
-            raise InvalidSignature("Transaction signature is invalid.")
-
-        return True
-
-    def validate_accept_return_inputs(self, bigchain, current_transactions=[]):
-        """Validate accept return transaction inputs according to business rules.
-        
-        Validation rules:
-        1. References exactly one Request Return x that is OPEN and binds the same Sell Tx
-        2. Performs return: Asset ownership moves back to seller
-        3. Funds/escrow refunded to buyer
-        4. Return request status transitions OPEN → CLOSED
-        5. No other active settles or returns for the same sale
-        
-        Args:
-            bigchain: BigchainDB instance for database queries
-            current_transactions: List of current uncommitted transactions
-            
-        Returns:
-            bool: True if validation passes
-            
-        Raises:
-            Various validation errors if rules are violated
-        """
-        # Validate exactly one input
-        if len(self.inputs) != 1:
-            raise ValueError("Accept return must have exactly one input")
-            
-        input_ = self.inputs[0]
-        input_txid = input_.fulfills.txid
-        input_tx = bigchain.get_transaction(input_txid)
-
-        if input_tx is None:
-            for ctxn in current_transactions:
-                if ctxn.id == input_txid:
-                    input_tx = ctxn
-
-        if input_tx is None:
-            raise InputDoesNotExist("input `{}` doesn't exist".format(input_txid))
-
-        # Check if input is already spent
-        spent = bigchain.get_spent(
-            input_txid, input_.fulfills.output, current_transactions
-        )
-        if spent:
-            raise DoubleSpend("input `{}` was already spent".format(input_txid))
-
-        # Get the output being referenced
-        output = input_tx.outputs[input_.fulfills.output]
-        input_conditions = [output]
-        input_txs = [input_tx]
-
-        # Validate asset ID consistency
-        asset_id = self.get_asset_id(input_txs)
-        tx_asset_id = self.asset["id"]
-
-        if asset_id != tx_asset_id:
-            raise AssetIdMismatch(
-                "The asset id of the input does not match the asset id of the transaction"
-            )
-
-        # Validate request return exists and is OPEN
-        request_return_id = self.asset.get('request_return_id')
-        if not request_return_id:
-            raise ValueError("Accept return must reference a request return transaction")
-            
-        request_return_tx = bigchain.get_transaction(request_return_id)
-        if not request_return_tx:
-            raise ValueError(f"Referenced request return {request_return_id} does not exist")
-            
-        if request_return_tx.operation != 'REQUEST_RETURN':
-            raise ValueError(f"Referenced transaction {request_return_id} is not a request return")
-
-        # Validate request return is OPEN
-        return_status = request_return_tx.metadata.get('return_policy_details', {}).get('return_status')
-        if return_status != 'PENDING':
-            raise ValueError(f"Request return {request_return_id} is not OPEN (status: {return_status})")
-
-        # Validate request return binds the same Sell Tx
-        sell_transaction_id = request_return_tx.asset.get('sell_transaction_id')
-        if not sell_transaction_id:
-            raise ValueError("Request return must reference a sell transaction")
-            
-        sell_tx = bigchain.get_transaction(sell_transaction_id)
-        if not sell_tx:
-            raise ValueError(f"Referenced sell transaction {sell_transaction_id} does not exist")
-            
-        if sell_tx.operation != 'SELL':
-            raise ValueError(f"Referenced transaction {sell_transaction_id} is not a sell transaction")
-
-        # Validate accepter = seller from the sell transaction
-        accepter_pub_key = self.metadata.get('accepter_public_key')
-        
-        # Get the buy offer from the sell transaction
-        buy_offer_id = sell_tx.asset.get('buy_offer_id')
-        buy_offer_tx = bigchain.get_transaction(buy_offer_id)
-        
-        if not buy_offer_tx:
-            raise ValueError(f"Referenced buy offer {buy_offer_id} does not exist")
-            
-        # Get the advertisement from the buy offer
-        advertisement_id = buy_offer_tx.asset.get('advertisement_id')
-        advertisement_tx = bigchain.get_transaction(advertisement_id)
-        
-        if not advertisement_tx:
-            raise ValueError(f"Referenced advertisement {advertisement_id} does not exist")
-            
-        seller_pub_key = advertisement_tx.metadata.get('advertiser_public_key')
-        
-        if accepter_pub_key != seller_pub_key:
-            raise ValueError("Accepter must be the seller from the sell transaction")
-
-        # Validate refund details
-        refund_details = self.metadata.get('refund_details', {})
-        if not refund_details:
-            raise ValueError("Accept return must include refund details")
-            
-        refund_amount = refund_details.get('refund_amount')
-        refund_currency = refund_details.get('refund_currency')
-        refund_method = refund_details.get('refund_method')
-        
-        if not refund_amount or not refund_currency or not refund_method:
-            raise ValueError("Refund details must include amount, currency, and method")
-
-        # Check if there are other active settles or returns for this sale
-        existing_returns = bigchain.get_transactions_filtered(
-            asset_id=asset_id, 
-            operation='REQUEST_RETURN'
-        )
-        
-        for existing_return in existing_returns:
-            if (existing_return.asset.get('sell_transaction_id') == sell_transaction_id and
-                existing_return.metadata.get('return_policy_details', {}).get('return_status') == 'PENDING' and
-                existing_return.id != request_return_id):
-                raise ValueError(f"Sale {sell_transaction_id} has other active return requests")
-
-        # Validate signature
-        if not self.inputs_valid(input_conditions):
-            raise InvalidSignature("Transaction signature is invalid.")
-
-        return True
-
-    def validate_request_return_inputs(self, bigchain, current_transactions=[]):
-        """Validate request return transaction inputs according to business rules.
-        
-        Validation rules:
-        1. References exactly one SellTx (the sale being disputed)
-        2. Buyer = current owner of the asset right now
-        3. Sale is eligible for return (within window, policy allows)
-        4. Asset not re-transferred since that sale; still the same item
-        5. Single active OPEN return request per sale at a time
-        
-        Args:
-            bigchain: BigchainDB instance for database queries
-            current_transactions: List of current uncommitted transactions
-            
-        Returns:
-            bool: True if validation passes
-            
-        Raises:
-            Various validation errors if rules are violated
-        """
-        # Validate exactly one input
-        if len(self.inputs) != 1:
-            raise ValueError("Request return must have exactly one input")
-            
-        input_ = self.inputs[0]
-        input_txid = input_.fulfills.txid
-        input_tx = bigchain.get_transaction(input_txid)
-
-        if input_tx is None:
-            for ctxn in current_transactions:
-                if ctxn.id == input_txid:
-                    input_tx = ctxn
-
-        if input_tx is None:
-            raise InputDoesNotExist("input `{}` doesn't exist".format(input_txid))
-
-        # Check if input is already spent
-        spent = bigchain.get_spent(
-            input_txid, input_.fulfills.output, current_transactions
-        )
-        if spent:
-            raise DoubleSpend("input `{}` was already spent".format(input_txid))
-
-        # Get the output being referenced
-        output = input_tx.outputs[input_.fulfills.output]
-        input_conditions = [output]
-        input_txs = [input_tx]
-
-        # Validate asset ID consistency
-        asset_id = self.get_asset_id(input_txs)
-        tx_asset_id = self.asset["id"]
-
-        if asset_id != tx_asset_id:
-            raise AssetIdMismatch(
-                "The asset id of the input does not match the asset id of the transaction"
-            )
-
-        # Validate sell transaction exists
-        sell_transaction_id = self.asset.get('sell_transaction_id')
-        if not sell_transaction_id:
-            raise ValueError("Request return must reference a sell transaction")
-            
-        sell_tx = bigchain.get_transaction(sell_transaction_id)
-        if not sell_tx:
-            raise ValueError(f"Referenced sell transaction {sell_transaction_id} does not exist")
-            
-        if sell_tx.operation != 'SELL':
-            raise ValueError(f"Referenced transaction {sell_transaction_id} is not a sell transaction")
-
-        # Validate requester = buyer from the sell transaction
-        requester_pub_key = self.metadata.get('requester_public_key')
-        
-        # Get the buy offer from the sell transaction
-        buy_offer_id = sell_tx.asset.get('buy_offer_id')
-        buy_offer_tx = bigchain.get_transaction(buy_offer_id)
-        
-        if not buy_offer_tx:
-            raise ValueError(f"Referenced buy offer {buy_offer_id} does not exist")
-            
-        buyer_pub_key = buy_offer_tx.metadata.get('buyer_public_key')
-        
-        if requester_pub_key != buyer_pub_key:
-            raise ValueError("Requester must be the buyer from the sell transaction")
-
-        # Validate return policy allows return
-        return_policy = self.metadata.get('return_policy_details', {})
-        return_window = return_policy.get('return_window_days', 0)
-        
-        if return_window <= 0:
-            raise ValueError("Return policy must allow returns")
-
-        # Check if there's already an active return request for this sale
-        existing_returns = bigchain.get_transactions_filtered(
-            asset_id=asset_id, 
-            operation='REQUEST_RETURN'
-        )
-        
-        for existing_return in existing_returns:
-            if (existing_return.asset.get('sell_transaction_id') == sell_transaction_id and
-                existing_return.metadata.get('return_policy_details', {}).get('return_status') == 'PENDING'):
-                raise ValueError(f"Sale {sell_transaction_id} already has an active return request")
-
-        # Validate signature
         if not self.inputs_valid(input_conditions):
             raise InvalidSignature("Transaction signature is invalid.")
 
@@ -2613,7 +2023,7 @@ class Transaction(object):
         #     )
 
         return True
-
+    
     def validate_bid(self, bigchain, current_transactions=[]):
         # FIXME: BID received for stale RFQ(timeout or fulfilled)
         rfq_tx_id = self.asset["data"]["rfq_id"]
@@ -2645,7 +2055,386 @@ class Transaction(object):
             )
 
         return self.validate_transfer_inputs(bigchain, current_transactions)
+    
+    
+    def validate_buy_offer(self, bigchain, current_transactions=[]):
+        
+        adv_tx_id = self.asset["data"]["adv_id"]
+        adv_tx = bigchain.get_transaction(adv_tx_id)
+        #logger.debug("adv!!! %s", adv_tx)
+        if adv_tx is None:
+            raise InputDoesNotExist("ADV input `{}` doesn't exist".format(adv_tx_id))
 
+        if adv_tx.operation != self.ADV:
+            raise ValidationError(
+                "BUYOFFER transaction must be against a commited ADV transaction"
+            )
+
+        adv_min_amt = adv_tx.metadata.get("minAmt")
+        buy_offer_amt = self.metadata.get("minAmt")
+        # Check if minAmt exists and compare
+        if adv_min_amt is None:
+            raise ValidationError("ADV transaction must have a `minAmt` specified")
+
+        if buy_offer_amt is None or int(buy_offer_amt) < int(adv_min_amt):
+            raise ValidationError(
+                f"BUYOFFER amount ({buy_offer_amt}) does not meet the required minimum amount ({adv_min_amt})"
+            )
+
+        
+        for output in self.outputs:
+            if (
+                len(output.public_keys) != 1
+                or output.public_keys[0]
+                != config["smartchaindb_key_pair"]["public_key"]
+            ):
+                raise ValidationError(
+                    "BUYOFFER transaction's outputs must point to Escrow account"
+                )
+        #This part should comment if  shacl
+        #complex validation
+        # adv_status = adv_tx.metadata.get("status")
+        
+        # if adv_status.lower() != "open":
+        #     raise ValidationError(
+        #         "BUYOFFER transaction must be against an open ADV transaction"
+        #     ) 
+        #end
+        #This part should comment if not shacl
+        #start_time = time.time()
+        if self.id in shacl_validator.validated_transactions:#not optimized
+            #logging.info(f"Transaction {self.id} already validated.")
+            return  self.validate_transfer_inputs(bigchain, current_transactions) 
+        
+        json_data_buy_offer = {
+            "asset_ref": self.asset["data"]["id"],
+            "adv_ref": self.asset["data"]["adv_id"],
+            "transaction_id": self.id,
+            "operation": self.operation,
+            "spend": self.asset["data"]["id"],
+            
+        }
+
+        validation_result = shacl_validator.validate_shape(json_data_buy_offer)
+        if not validation_result: 
+            raise ValidationError(
+                    "BUYOFFER transaction'Validation failed"
+                )
+        else:
+            # end_time = time.time()
+            # logging.info(f"Time taken to validate buyoffer: {end_time - start_time} seconds")
+        ##end
+        
+            return self.validate_transfer_inputs(bigchain, current_transactions) 
+        
+    def validate_sell(self, bigchain, current_transactions=[]):
+        asset_id = self.asset["data"]["asset_id"]
+        offer_id = self.asset["data"]["ref2_id"]
+        adv_id = self.asset["data"]["ref1_id"]
+        buy_offer_tx = bigchain.get_transaction(offer_id)
+        adv_tx = bigchain.get_transaction(adv_id)
+        
+        if adv_tx is None:
+            raise InputDoesNotExist("ADV input `{}` doesn't exist".format(adv_id))
+       
+        if buy_offer_tx.operation != self.BUYOFFER:
+            raise ValidationError(
+                "SELL transaction must be against a commited BUYOFFER transaction"
+            )
+
+        for output in self.outputs:
+            if (
+                len(output.public_keys) != 1
+                or output.public_keys[0]
+                != config["smartchaindb_key_pair"]["public_key"]
+            ):
+                raise ValidationError(
+                    "SELL transaction's outputs must point to Escrow account"
+                )
+        #This part should comment in case of shacl validation  
+        #complex validation 
+        # adv_status = adv_tx.metadata.get("status") 
+        # if adv_status.lower() != "open":
+        #     raise ValidationError(
+        #         "SELL transaction must be against an open ADV transaction"
+        #     )
+        #end comment area
+        ##This part should comment if not shacl validation  
+        #start_time = time.time()
+        if self.id in shacl_validator.validated_transactions:
+            return  self.validate_transfer_inputs(bigchain, current_transactions) 
+        
+        json_data_sell = {
+            "asset_id": self.asset["data"]["asset_id"],
+            "adv_ref": self.asset["data"]["ref1_id"],
+            "buyOffer_ref": self.asset["data"]["ref2_id"],
+            "transaction_id": self.id,
+            "operation": self.operation,
+            "spend": self.asset["data"]["asset_id"],
+        }
+        
+        
+        validation_result = shacl_validator.validate_shape(json_data_sell)
+        if not validation_result: 
+            raise ValidationError(
+                    "SELL transaction'Validation failed"
+                )
+        else:
+            # end_time = time.time()
+            # logging.info(f"Time taken to validate sell: {end_time - start_time} seconds")
+        #end
+        
+            return self.validate_transfer_inputs(bigchain, current_transactions) 
+     
+     
+    
+    
+    @classmethod
+    def handle_sell_transaction(cls,sell_data):
+        """
+        Update the status of the referenced ADV after a successful SELL transaction.
+
+        Args:
+            sell_data (dict): The SELL transaction data in JSON-LD format.
+            graph (Graph): The RDF graph where the data is stored.
+        """
+        
+        ttl_file_path = os.path.join(os.path.dirname(__file__), 'output.ttl')
+        graph = Graph()
+
+        # Load the RDF graph from the output.ttl file
+        if os.path.exists(ttl_file_path):
+            graph.parse(ttl_file_path, format="turtle")
+            print(f"Loaded graph from {ttl_file_path}")
+        else:
+            print(f"File {ttl_file_path} does not exist.")
+            return False
+        # 1. Extract the ADV ID from the SELL transaction data
+        adv_tx_id = sell_data.get("adv_ref")  # "ref" maps to "ex:ref" in your context
+        
+
+        if not adv_tx_id:
+            print("Invalid SELL transaction: Missing adv_ref.")
+            return False
+
+        # 2. Create the URIRef for the ADV node in the RDF graph
+        adv_node = URIRef("http://example.org/txn/" + adv_tx_id)
+        # for s, p, o in graph.triples((adv_node, None, None)):
+        #      print(f"Triple: {s} {p} {o}")
+        # print("!!!!!!!! adv_node", adv_node)
+        # Full URIs for properties and classes
+        status_property = URIRef("http://example.org/status")
+        adv_class = URIRef("http://example.org/ADV")
+
+        
+       
+
+        # 3. Check if the ADV node exists and is of type ex:ADV
+        if (adv_node, RDF.type, adv_class) in graph:
+            
+            open_status = Literal("Open")
+            if (adv_node, status_property, open_status) in graph:
+                # 5. Update the status to "Closed"
+                closed_status = Literal("Closed")
+                graph.set((adv_node, status_property, closed_status))
+                print("ADV status successfully updated to 'Closed'.")
+
+                # Optional: Save the updated graph back to file if necessary
+                graph.serialize(destination=ttl_file_path, format="turtle")
+
+                return True
+            else:
+                print("ADV transaction status is not 'Open' or not found.")
+                return False
+        else:
+            print("ADV transaction not found in the graph.")
+            return False
+
+                   
+        
+    def generateShape(self):
+        #commented for not shacl
+        #start_time = time.time()
+        if self.id in shacl_validator.create_shape_cache: #not optimized
+            #logging.info(f"Transaction already processed. Skipping shape generation.")
+            return True
+        
+        json_data = {
+            "asset_id": self.id,
+            "transaction_id": self.id,
+            "operation": self.operation,
+            
+        }
+        
+        context = {
+            "@context": {
+                "ex": "http://example.org/",
+                "schema": "http://schema.org/",
+                "asset_id": "ex:asset_id",
+                "transaction_id": "ex:transaction_id",
+                "operation": "ex:operation",
+                
+            }
+        }
+
+        jsonld_data = {
+            "@context": context["@context"],  # Reuse the existing context variable
+            "@id": "http://example.org/txn/" + json_data["transaction_id"],
+            "@type": "ex:" + "asset_id",
+            
+        }   
+        
+        g = Graph()
+        g.parse(data=json.dumps(jsonld_data), format='json-ld')
+        
+        # Serialize RDF to Turtle format
+        ttl_data = g.serialize(format='turtle').decode('utf-8')
+        
+        
+        script_dir = os.path.dirname(__file__)
+        ttl_file_path = os.path.join(script_dir, 'output.ttl')
+        with open(ttl_file_path, 'a', encoding='utf-8') as turtle_file:
+            turtle_file.write(ttl_data)
+        #shacl_validator.update_existing_graph(ttl_data) 
+        shacl_validator.create_shape_cache.add(self.id)
+        # end_time = time.time()
+        # logging.info(f"Time taken to generate shape: {end_time - start_time} seconds")    
+        # logger.debug(f"Time taken to generate shape: {end_time - start_time} seconds") 
+        return True
+        
+    def validate_adv(self, bigchain, current_transactions=[]):
+        
+        create_tx_id = self.asset["data"]["asset_id"]
+        create_tx = bigchain.get_transaction(create_tx_id)
+
+        if create_tx is None:
+            raise InputDoesNotExist("Create input `{}` doesn't exist".format(create_tx_id))
+
+        if create_tx.operation != self.CREATE:
+            raise ValidationError(
+                "ADV transaction must be against a commited CREATE transaction"
+            )
+        ## uncomment in not shacl
+        #complex
+        # adv_list = bigchain.get_adv_txids_for_asset(create_tx_id)
+        
+        # if adv_list:
+        #     raise DuplicateTransaction(
+        #         "ADV tx with the same asset input `{}` already committed".format(
+        #             adv_list
+        #         )
+        #     )
+        ##end uncomment
+        ##This part should comment if not shacl
+        #start_time = time.time()
+        
+        if self.id in shacl_validator.validated_transactions: #not optimized
+            
+            return  
+        json_data_adv1 = {
+            "asset_id": self.asset["data"]["asset_id"],
+            "transaction_id": self.id,
+            "operation": self.operation,
+            "status":self.metadata["status"]
+            
+        }
+
+        
+        validation_result = shacl_validator.validate_shape(json_data_adv1)
+        
+        if not validation_result: 
+            raise ValidationError(
+                    "SELL transaction'Validation failed"
+                )
+        
+        # end_time = time.time()
+        # logging.info(f"Time taken to validate adv: {end_time - start_time} seconds")
+        # logger.debug(f"Time taken to validate adv: {end_time - start_time} seconds")
+        ##end
+            
+    def validate_update_adv(self, bigchain, current_transactions=[]):
+        
+        create_tx_id = self.asset["data"]["asset_id"]
+        create_tx = bigchain.get_transaction(create_tx_id)
+
+        if create_tx is None:
+            raise InputDoesNotExist("Create input `{}` doesn't exist".format(create_tx_id))
+
+        if create_tx.operation != self.CREATE:
+            raise ValidationError(
+                "ADV transaction must be against a commited CREATE transaction"
+            )
+        
+        return True
+        json_data_adv1 = {
+            "asset_id": self.asset["data"]["asset_id"],
+            "transaction_id": self.id,
+            "operation": self.operation,
+            "status":self.metadata["status"]
+            
+        }
+
+        
+        script_dir = os.path.dirname(__file__)
+        
+        # SHACL shapes file path
+        shacl_file_path = os.path.join(script_dir, 'shacl_shape.ttl')
+        
+
+        # Validate the first advertisement
+        validation_result = shacl_validator.validate_shape(json_data_adv1)
+        
+        if not validation_result: 
+            raise ValidationError(
+                    "SELL transaction'Validation failed"
+                )
+
+        
+                
+        
+
+    @classmethod
+    def build_exchange_tx(cls, asset_id, fulfilled_tx, recepient_pub_key):
+        
+        
+        output_index = 0
+        output = fulfilled_tx.outputs[output_index]
+
+        buy_input =Input(
+            fulfillment=output.fulfillment,
+            owners_before=output.public_keys,
+            fulfills=TransactionLink(asset_id, output_index),
+        )
+        
+        buy_output = Output.generate(
+            public_keys=[recepient_pub_key], amount=output.amount
+        )
+        
+        asset = {
+            
+                "id": asset_id
+                
+            
+        }
+        
+        metadata = {
+            "requestCreationTimestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")
+        }
+
+        buy_tx = Transaction(
+            operation=Transaction.TRANSFER,
+            asset=asset,
+            inputs=[buy_input],
+            outputs=[buy_output],
+            metadata=metadata,
+        )
+        
+        return buy_tx.sign([config["smartchaindb_key_pair"]["private_key"]])
+         
+        
+        
+        
+    
     @classmethod
     def build_return_tx(cls, accept_id, asset_id, fulfilled_tx, recepient_pub_key):
         output_index = 0
@@ -2679,6 +2468,75 @@ class Transaction(object):
 
         return return_tx.sign([config["smartchaindb_key_pair"]["private_key"]])
 
+    
+    @classmethod
+    def update_adv_metadata_on_server(cls, bigchain, adv_tx_id, new_metadata, server_keypair):
+        # Fetch the original advertisement transaction
+        adv_tx = bigchain.get_transaction(adv_tx_id)
+
+        # Copy the metadata and apply updates
+        updated_metadata = adv_tx.metadata.copy()  # Keep the existing metadata
+        updated_metadata.update(new_metadata)  # Apply new metadata, like status
+
+        # Create a new transaction referencing the original one, but updating only metadata
+        new_tx = Transaction.create(
+            inputs=[adv_tx.inputs[0]],  # Use the original transaction's input
+            outputs=adv_tx.outputs,  # Use the same outputs
+            asset={'id': adv_tx["data"]["asset_id"]},  # Reference the same asset
+            metadata=updated_metadata  # Apply the updated metadata
+        ).sign([server_keypair.private_key])  # Server signs the transaction
+
+        # Send the transaction to BigchainDB
+        bigchain.write_transaction(new_tx)
+
+        # Return the new transaction ID
+        return new_tx.id
+
+    @classmethod
+    def determine_exchanges(
+        cls, bigchain, sell_id, asset_tx_id=None, adv_tx_id=None, buyer_asset_tx_id=None
+    ):
+        input_index = 0
+        exchange_txs = list()
+
+        if adv_tx_id is None or buyer_asset_tx_id or asset_tx_id is None:
+            sell_tx = bigchain.get_transaction(sell_id)
+            adv_tx_id = sell_tx.asset["data"]["ref1_id"]
+            buyer_asset_tx_id = sell_tx.asset["data"]["ref2_id"]
+            asset_id = sell_tx.asset["data"]["asset_id"]
+
+        adv_tx = bigchain.get_transaction(adv_tx_id)
+        if(adv_tx.operation == cls.ADV):
+            seller_asset_id = adv_tx.asset["data"]["asset_id"]
+            # json_data_sell = {    
+            #     "adv_ref": adv_tx_id }
+            # cls.handle_sell_transaction(json_data_sell)
+        else:
+            seller_asset_id = adv_tx.asset["id"]
+        seller_asset_tx = bigchain.get_transaction(seller_asset_id)
+        sell_tx = bigchain.get_transaction(sell_id)
+        buyer_asset_tx = bigchain.get_transaction(buyer_asset_tx_id)
+
+        seller_pub_key = sell_tx.inputs[input_index].owners_before[-1]
+        buy_tx = Transaction.build_exchange_tx(
+            buyer_asset_tx_id, buyer_asset_tx, seller_pub_key
+        )
+        exchange_txs.append(buy_tx)
+
+        buyer_pub_key = buyer_asset_tx.inputs[input_index].owners_before[-1]
+        buy_tx = Transaction.build_exchange_tx(
+            sell_id, sell_tx, buyer_pub_key
+        )
+        exchange_txs.append(buy_tx)
+
+        server_keypair = generate_keypair()  # Server's keypair for signing the transaction
+
+        # Update the metadata by passing a dictionary
+        #cls.update_adv_metadata_on_server(bigchain, adv_tx_id, {'status': 'Closed'}, server_keypair)
+        
+        return exchange_txs
+
+    
     @classmethod
     def determine_returns(
         cls, bigchain, accept_id, rfq_tx_id=None, winning_bid_id=None
@@ -2773,7 +2631,105 @@ class Transaction(object):
             )
 
         return self.validate_transfer_inputs(bigchain, current_transactions)
+    
+    def validate_inverse_txn(self, bigchain, current_transactions=[]):
+        
+        
+        sell_tx_id = self.asset["data"]["sell_id"]
+        return_asset_tx_id = self.asset["data"]["asset_id"]
+        
+        sell_tx = bigchain.get_transaction(sell_tx_id)
+        return_asset_tx = bigchain.get_transaction(return_asset_tx_id)
+        if sell_tx is None:
+            raise InputDoesNotExist("SELL input `{}` doesn't exist".format(sell_tx_id))
 
+        if return_asset_tx.operation != self.SELL:
+            raise ValidationError(
+                "RETRUN SELL transaction must be against a commited SELL transaction"
+            )
+
+        for output in self.outputs:
+            if (
+                len(output.public_keys) != 1
+                or output.public_keys[0]
+                != config["smartchaindb_key_pair"]["public_key"]
+            ):
+                raise ValidationError(
+                    "RETRUN SELL transaction's outputs must point to Escrow account"
+                )
+        ##This part should comment  if not shacl
+        if self.id in shacl_validator.validated_transactions: #not optimized
+            #logging.info(f"Transaction {self.id} already validated.")
+            return  self.validate_transfer_inputs(bigchain, current_transactions) 
+        json_data_accept_request_return = {
+            "asset_ref": self.asset["data"]["asset_id"],
+            "sell_ref": self.asset["data"]["sell_id"],
+            "transaction_id": self.id,
+            "operation": "REQUEST_RETURN", #self.operation,
+            "spend": self.asset["data"]["asset_id"],
+        }
+    
+        
+        validation_result = shacl_validator.validate_shape(json_data_accept_request_return)
+        if not validation_result: 
+            raise ValidationError(
+                    "RETRUN SELL transaction'Validation failed"
+                )
+        else:
+        ##end
+            return self.validate_transfer_inputs(bigchain, current_transactions) 
+
+    def validate_accept_return(self, bigchain, current_transactions=[]):
+        asset_id = self.asset["data"]["asset_id"]
+        offer_id = self.asset["data"]["ref2_id"]
+        adv_id = self.asset["data"]["ref1_id"]
+        buy_offer_tx = bigchain.get_transaction(offer_id)
+        adv_tx = bigchain.get_transaction(adv_id)
+        
+        if buy_offer_tx is None:
+            raise InputDoesNotExist("Return request  `{}` doesn't exist".format(offer_id))
+
+        if buy_offer_tx.operation != self.PRE_REQUEST:
+            raise ValidationError(
+                "ACCEPT RETURN transaction must be against a commited RETURN SELL transaction"
+            )
+
+        for output in self.outputs:
+            if (
+                len(output.public_keys) != 1
+                or output.public_keys[0]
+                != config["smartchaindb_key_pair"]["public_key"]
+            ):
+                raise ValidationError(
+                    "ACCEPT RETURN transaction's outputs must point to Escrow account"
+                )
+        ##This part should comment if not shacl
+        if self.id in shacl_validator.validated_transactions:#not optimized
+            #logging.info(f"Transaction {self.id} already validated.")
+            return self.validate_transfer_inputs(bigchain, current_transactions)  # Skip further processing if already validated
+        
+        json_data_accept_return = {
+            "asset_id": self.asset["data"]["asset_id"],
+            "sell_ref": self.asset["data"]["ref1_id"],
+            "request_return_ref": self.asset["data"]["ref2_id"],
+            "transaction_id": self.id,
+            "operation": "ACCEPT_RETURN",#self.operation,
+            "spend": self.asset["data"]["asset_id"],
+        }
+    
+        
+        
+        validation_result = shacl_validator.validate_shape(json_data_accept_return)
+        if not validation_result: 
+            raise ValidationError(
+                    "ACCEPT_RETURN transaction'Validation failed"
+                )
+        else:
+        ##end
+            return self.validate_transfer_inputs(bigchain, current_transactions) 
+    
+    
+    
     @classmethod
     def send_transfer(cls, asset_id, fulfilled_tx, recipient_pub_key):
         """Custom transfer routine for transfering accumulated assets for a RFQ.

@@ -55,6 +55,11 @@ _, TX_SCHEMA_BID = _load_schema("transaction_bid_" + TX_SCHEMA_VERSION)
 _, TX_SCHEMA_ACCEPT = _load_schema("transaction_accept_" + TX_SCHEMA_VERSION)
 
 _, TX_SCHEMA_RETURN = _load_schema("transaction_return_" + TX_SCHEMA_VERSION)
+_, TX_SCHEMA_ADVERTISEMENT = _load_schema("transaction_advertisement_" + TX_SCHEMA_VERSION)
+_, TX_SCHEMA_BUY_OFFER = _load_schema("transaction_buyoffer_" + TX_SCHEMA_VERSION)
+_, TX_SCHEMA_SELL = _load_schema("transaction_sell_" + TX_SCHEMA_VERSION)
+_, TX_SCHEMA_REQUEST_RETURN = _load_schema("transaction_request_return_" + TX_SCHEMA_VERSION)
+_, TX_SCHEMA_ACCEPT_RETURN = _load_schema("transaction_accept_return_" + TX_SCHEMA_VERSION)
 
 
 def _validate_schema(schema, body):
@@ -106,5 +111,15 @@ def validate_transaction_schema(tx):
         _validate_schema(TX_SCHEMA_ACCEPT, tx)
     elif tx["operation"] == "RETURN":
         _validate_schema(TX_SCHEMA_RETURN, tx)
+    elif tx["operation"] == "ADVERTISEMENT":
+        _validate_schema(TX_SCHEMA_ADVERTISEMENT, tx)
+    elif tx["operation"] == "BUY_OFFER":
+        _validate_schema(TX_SCHEMA_BUY_OFFER, tx)
+    elif tx["operation"] == "SELL":
+        _validate_schema(TX_SCHEMA_SELL, tx)
+    elif tx["operation"] == "REQUEST_RETURN":
+        _validate_schema(TX_SCHEMA_REQUEST_RETURN, tx)
+    elif tx["operation"] == "ACCEPT_RETURN":
+        _validate_schema(TX_SCHEMA_ACCEPT_RETURN, tx)
     else:
         _validate_schema(TX_SCHEMA_CREATE, tx)

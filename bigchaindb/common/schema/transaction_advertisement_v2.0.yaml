@@ -1,0 +1,71 @@
+# Copyright © 2020 Interplanetary Database Association e.V.,
+# BigchainDB and IPDB software contributors.
+# SPDX-License-Identifier: (Apache-2.0 AND CC-BY-4.0)
+# Code is Apache-2.0 and docs are CC-BY-4.0
+
+---
+"$schema": "http://json-schema.org/draft-04/schema#"
+type: object
+title: Transaction Schema - ADVERTISEMENT specific properties
+required:
+- asset
+- metadata
+- inputs
+properties:
+  asset:
+    additionalProperties: false
+    properties:
+      id:
+        "$ref": "#/definitions/sha3_hexdigest"
+    required:
+    - id
+  metadata:
+    type: object
+    additionalProperties: false
+    required:
+    - status
+    - advertiser_public_key
+    properties:
+      status:
+        type: string
+        enum: ["OPEN", "LOCKED", "CLOSED"]
+      advertiser_public_key:
+        "$ref": "#/definitions/base58"
+      price:
+        type: string
+        pattern: "^[0-9]+(\\.[0-9]+)?$"
+      description:
+        type: string
+        maxLength: 1000
+      expiry_date:
+        type: string
+        format: "date-time"
+  inputs:
+    type: array
+    title: "Transaction inputs"
+    minItems: 1
+    maxItems: 1
+    items:
+      "$ref": "#/definitions/input"
+definitions:
+  sha3_hexdigest:
+    pattern: "[0-9a-f]{64}"
+    type: string
+  base58:
+    pattern: "[1-9a-zA-Z^OIl]{43,44}"
+    type: string
+  input:
+    type: object
+    required:
+    - fulfills
+    properties:
+      fulfills:
+        type: object
+        required:
+        - txid
+        - output
+        properties:
+          txid:
+            type: string
+          output:
+            type: integer

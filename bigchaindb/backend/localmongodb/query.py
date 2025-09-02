@@ -126,6 +126,10 @@ def get_txids_filtered(conn, asset_id, operation=None, last_tx=None):
     match = {
         Transaction.CREATE: {"operation": "CREATE", "id": asset_id},
         Transaction.TRANSFER: {"operation": "TRANSFER", "asset.id": asset_id},
+        Transaction.ADVERTISEMENT: {"operation": "ADVERTISEMENT", "asset.id": asset_id},
+        Transaction.BUY_OFFER: {"operation": "BUY_OFFER", "asset.id": asset_id},
+        Transaction.SELL: {"operation": "SELL", "asset.id": asset_id},
+        Transaction.REQUEST_RETURN: {"operation": "REQUEST_RETURN", "asset.id": asset_id},
         None: {"$or": [{"asset.id": asset_id}, {"id": asset_id}]},
     }[operation]
 
@@ -222,6 +226,166 @@ def text_search(
         return cursor
 
     return (_remove_text_score(obj) for obj in cursor)
+
+
+@register_query(LocalMongoDBConnection)
+def get_advertisements_by_status(conn, status):
+    """Get all advertisements with a specific status.
+    
+    Args:
+        conn: Database connection
+        status: Status to filter by (OPEN, LOCKED, CLOSED)
+        
+    Returns:
+        Cursor of advertisement transactions
+    """
+    query = {
+        "$and": [
+            {"operation": "ADVERTISEMENT"},
+            {"metadata.status": status}
+        ]
+    }
+    cursor = conn.run(conn.collection("transactions").find(query))
+    return cursor
+
+
+@register_query(LocalMongoDBConnection)
+def get_advertisements_by_asset(conn, asset_id):
+    """Get all advertisements for a specific asset.
+    
+    Args:
+        conn: Database connection
+        asset_id: Asset ID to filter by
+        
+    Returns:
+        Cursor of advertisement transactions
+    """
+    query = {
+        "$and": [
+            {"operation": "ADVERTISEMENT"},
+            {"asset.id": asset_id}
+        ]
+    }
+    cursor = conn.run(conn.collection("transactions").find(query))
+    return cursor
+
+
+@register_query(LocalMongoDBConnection)
+def get_open_advertisements(conn):
+    """Get all OPEN advertisements.
+    
+    Args:
+        conn: Database connection
+        
+    Returns:
+        Cursor of OPEN advertisement transactions
+    """
+    return get_advertisements_by_status(conn, "OPEN")
+
+
+@register_query(LocalMongoDBConnection)
+def get_buy_offers_by_advertisement(conn, advertisement_id):
+    """Get all buy offers for a specific advertisement.
+    
+    Args:
+        conn: Database connection
+        advertisement_id: Advertisement ID to filter by
+        
+    Returns:
+        Cursor of buy offer transactions
+    """
+    query = {
+        "$and": [
+            {"operation": "BUY_OFFER"},
+            {"asset.advertisement_id": advertisement_id}
+        ]
+    }
+    cursor = conn.run(conn.collection("transactions").find(query))
+    return cursor
+
+
+@register_query(LocalMongoDBConnection)
+def get_buy_offers_by_buyer(conn, buyer_public_key):
+    """Get all buy offers from a specific buyer.
+    
+    Args:
+        conn: Database connection
+        buyer_public_key: Buyer's public key to filter by
+        
+    Returns:
+        Cursor of buy offer transactions
+    """
+    query = {
+        "$and": [
+            {"operation": "BUY_OFFER"},
+            {"metadata.buyer_public_key": buyer_public_key}
+        ]
+    }
+    cursor = conn.run(conn.collection("transactions").find(query))
+    return cursor
+
+
+@register_query(LocalMongoDBConnection)
+def get_sell_transactions_by_buy_offer(conn, buy_offer_id):
+    """Get sell transactions for a specific buy offer.
+    
+    Args:
+        conn: Database connection
+        buy_offer_id: Buy offer ID to filter by
+        
+    Returns:
+        Cursor of sell transactions
+    """
+    query = {
+        "$and": [
+            {"operation": "SELL"},
+            {"asset.buy_offer_id": buy_offer_id}
+        ]
+    }
+    cursor = conn.run(conn.collection("transactions").find(query))
+    return cursor
+
+
+@register_query(LocalMongoDBConnection)
+def get_return_requests_by_sale(conn, sell_transaction_id):
+    """Get return requests for a specific sale.
+    
+    Args:
+        conn: Database connection
+        sell_transaction_id: Sell transaction ID to filter by
+        
+    Returns:
+        Cursor of return request transactions
+    """
+    query = {
+        "$and": [
+            {"operation": "REQUEST_RETURN"},
+            {"asset.sell_transaction_id": sell_transaction_id}
+        ]
+    }
+    cursor = conn.run(conn.collection("transactions").find(query))
+    return cursor
+
+
+@register_query(LocalMongoDBConnection)
+def get_return_requests_by_status(conn, status):
+    """Get all return requests with a specific status.
+    
+    Args:
+        conn: Database connection
+        status: Status to filter by (PENDING, APPROVED, REJECTED, COMPLETED)
+        
+    Returns:
+        Cursor of return request transactions
+    """
+    query = {
+        "$and": [
+            {"operation": "REQUEST_RETURN"},
+            {"metadata.return_policy_details.return_status": status}
+        ]
+    }
+    cursor = conn.run(conn.collection("transactions").find(query))
+    return cursor
 
 
 def _remove_text_score(asset):
@@ -457,3 +621,11 @@ def get_uncompleted_accept_tx(conn):
             {"status": "end_block"}
         )
     )
+
+ 
+ @ r e g i s t e r _ q u e r y ( L o c a l M o n g o D B C o n n e c t i o n ) 
+ 
+ d e f   g e t _ a c c e p t _ r e t u r n s _ b y _ r e q u e s t _ r e t u r n ( c o n n ,   r e q u e s t _ r e t u r n _ i d ) : 
+ 
+ d e f   g e t _ a c c e p t _ r e t u r n s _ b y _ r e q u e s t _ r e t u r n ( c o n n ,   r e q u e s t _ r e t u r n _ i d ) :  
+ 

@@ -1,0 +1,75 @@
+type: object
+title: Transaction Schema - ACCEPT_RETURN specific properties
+required:
+- asset
+- metadata
+- inputs
+properties:
+  asset:
+    properties:
+      id:
+        "$ref": "#/definitions/sha3_hexdigest"
+      request_return_id:
+        "$ref": "#/definitions/sha3_hexdigest"
+    required:
+    - id
+    - request_return_id
+  metadata:
+    required:
+    - accepter_public_key
+    - return_acceptance_timestamp
+    - refund_details
+    - return_processing_notes
+    properties:
+      accepter_public_key:
+        "$ref": "#/definitions/base58"
+      return_acceptance_timestamp:
+        type: string
+        format: "date-time"
+      refund_details:
+        type: object
+        required:
+        - refund_amount
+        - refund_currency
+        - refund_method
+        properties:
+          refund_amount:
+            type: number
+            minimum: 0
+          refund_currency:
+            type: string
+            minLength: 1
+          refund_method:
+            type: string
+            description: "Method used for refund (e.g., bank transfer, escrow return)"
+      return_processing_notes:
+        type: string
+        description: "Notes about the return processing"
+  inputs:
+    type: array
+    minItems: 1
+    maxItems: 1
+    items:
+      "$ref": "#/definitions/input"
+definitions:
+  sha3_hexdigest:
+    pattern: "[0-9a-f]{64}"
+    type: string
+  base58:
+    pattern: "[1-9a-zA-Z^OIl]{43,44}"
+    type: string
+  input:
+    type: object
+    required:
+    - fulfills
+    properties:
+      fulfills:
+        type: object
+        required:
+        - txid
+        - output
+        properties:
+          txid:
+            type: string
+          output:
+            type: integer

@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  transaction-tester:
+    image: python:3.9-slim
+    volumes:
+      - .:/workspace
+    working_dir: /workspace
+    command: >
+      bash -c "
+        pip install pynacl python-rapidjson base58 cryptoconditions requests setproctitle packaging &&
+        python examples/test_all_transactions.py
+      "
+    environment:
+      - PYTHONPATH=/workspace

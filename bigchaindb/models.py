@@ -58,6 +58,16 @@ class Transaction(Transaction):
             self.validate_accept(bigchain, current_transactions)
         elif self.operation == Transaction.RETURN:
             self.validate_return(bigchain, current_transactions)
+        elif self.operation == Transaction.ADVERTISEMENT:
+            self.validate_advertisement_inputs(bigchain, current_transactions)
+        elif self.operation == Transaction.BUY_OFFER:
+            self.validate_buy_offer_inputs(bigchain, current_transactions)
+        elif self.operation == Transaction.SELL:
+            self.validate_sell_inputs(bigchain, current_transactions)
+        elif self.operation == Transaction.REQUEST_RETURN:
+            self.validate_request_return_inputs(bigchain, current_transactions)
+        elif self.operation == Transaction.ACCEPT_RETURN:
+            self.validate_accept_return_inputs(bigchain, current_transactions)
 
         return self
 
