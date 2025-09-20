@@ -532,6 +532,10 @@ class Transaction(object):
     BID = "BID"
     ACCEPT = "ACCEPT"
     RETURN = "RETURN"
+    ADVERTISE = "ADVERTISE"
+    BUY = "BUY"
+    SELL = "SELL"
+    LOCK = "LOCK"
     ALLOWED_OPERATIONS = (
         CREATE,
         TRANSFER,
@@ -541,6 +545,10 @@ class Transaction(object):
         BID,
         ACCEPT,
         RETURN,
+        ADVERTISE,
+        BUY,
+        SELL,
+        LOCK,
     )
     VERSION = "2.0"
 
@@ -1742,6 +1750,100 @@ class Transaction(object):
             )
 
         return self.validate_transfer_inputs(bigchain, current_transactions)
+
+    def validate_advertise(self, bigchain, current_transactions=[]):
+        """Validate ADVERTISE transaction"""
+        from datetime import datetime
+        
+        # Get asset ID and advertiser
+        asset_id = self.asset["data"]["asset_id"]
+        advertiser = self.inputs[0].owners_before[0]
+        
+        # Check ownership
+        asset_tx = bigchain.get_transaction(asset_id)
+        if asset_tx is None:
+            raise InputDoesNotExist("Asset `{}` doesn't exist".format(asset_id))
+        
+        # Get current owner
+        current_owner = asset_tx.outputs[0].public_keys[0]
+        if advertiser != current_owner:
+            raise ValidationError("Advertiser must own the asset being advertised")
+        
+        # Check for existing open advertisements
+        open_ads = bigchain.get_open_advertisements_for_asset(asset_id)
+        if open_ads:
+            raise DuplicateTransaction("Asset `{}` already has an open advertisement".format(asset_id))
+        
+        # Check expiry time
+        expiry_time = self.metadata.get("expiry_time")
+        if expiry_time:
+            try:
+                from dateutil import parser
+                expiry_dt = parser.parse(expiry_time)
+                if expiry_dt <= datetime.now():
+                    raise ValidationError("Advertisement must not be expired")
+            except (ValueError, TypeError):
+                raise ValidationError("Invalid expiry time format")
+        
+        # Check price
+        price = self.asset["data"].get("price")
+        if price is None or float(price) <= 0:
+            raise ValidationError("Price must be positive")
+        
+        return True
+
+    def validate_buy(self, bigchain, current_transactions=[]):
+        """Validate BUY transaction"""
+        from datetime import datetime
+        
+        # Get advertisement ID and buyer
+        ad_id = self.asset["data"]["advertisement_id"]
+        buyer = self.asset["data"]["buyer_public_key"]
+        payment_amount = self.asset["data"]["payment_amount"]
+        
+        # Check advertisement exists and is open
+        ad_tx = bigchain.get_transaction(ad_id)
+        if ad_tx is None or ad_tx.operation != self.ADVERTISE:
+            raise InputDoesNotExist("Advertisement `{}` doesn't exist".format(ad_id))
+        
+        # Check advertisement status
+        ad_status = ad_tx.metadata.get("status", "OPEN")
+        if ad_status not in ["OPEN"]:
+            raise ValidationError("Advertisement must be open for purchase")
+        
+        # Check advertisement not expired
+        expiry_time = ad_tx.metadata.get("expiry_time")
+        if expiry_time:
+            try:
+                from dateutil import parser
+                expiry_dt = parser.parse(expiry_time)
+                if expiry_dt <= datetime.now():
+                    raise ValidationError("Advertisement has expired")
+            except (ValueError, TypeError):
+                pass  # If expiry format is invalid, ignore
+        
+        # Check payment amount matches advertisement price
+        ad_price = ad_tx.asset["data"].get("price")
+        if ad_price and float(payment_amount) != float(ad_price):
+            raise ValidationError("Payment amount must match advertisement price")
+        
+        # Check buyer has sufficient funds (simplified check)
+        # In a real implementation, this would check the buyer's balance
+        if float(payment_amount) <= 0:
+            raise ValidationError("Payment amount must be positive")
+        
+        return True
+
+    def validate_sell(self, bigchain, current_transactions=[]):
+        """Validate SELL transaction"""
+        # SELL is essentially a TRANSFER with additional validation
+        return self.validate_transfer_inputs(bigchain, current_transactions)
+
+    def validate_lock(self, bigchain, current_transactions=[]):
+        """Validate LOCK transaction"""
+        # LOCK prevents further transactions on an asset
+        # This is a placeholder implementation
+        return True
 
     @classmethod
     def send_transfer(cls, asset_id, fulfilled_tx, recipient_pub_key):

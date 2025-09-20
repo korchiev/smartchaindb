@@ -312,6 +312,10 @@ class BigchainDB(object):
         """Get Accept Bid tx(if any) for a RFQ transaction."""
         return backend.query.get_accept_tx_for_rfq(self.connection, rfq_tx_id)
 
+    def get_open_advertisements_for_asset(self, asset_id):
+        """Get open advertisements for a specific asset."""
+        return backend.query.get_open_advertisements_for_asset(self.connection, asset_id)
+
     def get_outputs_filtered(self, owner, spent=None):
         """Get a list of output links filtered on some criteria
 

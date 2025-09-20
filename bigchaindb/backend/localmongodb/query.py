@@ -415,6 +415,21 @@ def get_asset_tokens_for_public_key(conn, asset_id, public_key):
 
 
 @register_query(LocalMongoDBConnection)
+def get_open_advertisements_for_asset(conn, asset_id):
+    """Get open advertisements for a specific asset."""
+    query = {
+        "operation": "ADVERTISE",
+        "asset.data.asset_id": asset_id,
+        "metadata.status": {"$in": ["OPEN", None]}  # Include transactions without status field
+    }
+    
+    cursor = conn.run(
+        conn.collection("transactions").find(query, {"_id": False})
+    )
+    return list(cursor)
+
+
+@register_query(LocalMongoDBConnection)
 def store_abci_chain(conn, height, chain_id, is_synced=True):
     return conn.run(
         conn.collection("abci_chains").replace_one(

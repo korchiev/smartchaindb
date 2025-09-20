@@ -456,6 +456,20 @@ def get_asset_tokens_for_public_key(connection, asset_id, public_key):
 
 
 @singledispatch
+def get_open_advertisements_for_asset(connection, asset_id):
+    """Get open advertisements for a specific asset.
+    
+    Args:
+        connection: Database connection
+        asset_id (str): ID of the asset
+        
+    Returns:
+        List of open advertisement transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
 def store_abci_chain(conn, height, chain_id, is_synced=True):
     """Create or update an ABCI chain at the given height.
     Usually invoked in the beginning of the ABCI communications (height=0)
