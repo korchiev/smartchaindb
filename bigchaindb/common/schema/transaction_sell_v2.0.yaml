@@ -1,35 +1,38 @@
 type: object
 title: Transaction Schema - SELL specific properties
 required:
-- asset
-- metadata
-- inputs
-- outputs
+  - asset
+  - metadata
+  - inputs
+  - outputs
 properties:
   asset:
+    type: object
+    additionalProperties: false
     properties:
       id:
         "$ref": "#/definitions/sha3_hexdigest"
-      buy_offer_id:
-        "$ref": "#/definitions/sha3_hexdigest"
+      data:
+        anyOf:
+          - type: object
+            additionalProperties: true
+          - type: "null"
     required:
-    - id
-    - buy_offer_id
+      - id
   metadata:
     required:
-    - seller_public_key
-    - buyer_public_key
-    - sale_amount
-    - sale_currency
-    - sale_timestamp
+      - seller_public_key
+      - buyer_public_key
+      - sale_amount
+      - sale_currency
     properties:
       seller_public_key:
         "$ref": "#/definitions/base58"
       buyer_public_key:
         "$ref": "#/definitions/base58"
       sale_amount:
-        type: number
-        minimum: 0
+        type: string
+        pattern: "^[0-9]{1,20}$"
       sale_currency:
         type: string
         minLength: 1

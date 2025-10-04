@@ -7,28 +7,30 @@ required:
 - outputs
 properties:
   asset:
+    type: object
+    additionalProperties: false
     properties:
       id:
         "$ref": "#/definitions/sha3_hexdigest"
-      advertisement_id:
-        "$ref": "#/definitions/sha3_hexdigest"
+      data:
+        anyOf:
+          - type: object
+            additionalProperties: true
+          - type: "null"
     required:
     - id
-    - advertisement_id
   metadata:
     required:
     - buyer_public_key
     - offer_amount
-    - offer_currency
-    - offer_timestamp
     - offer_expiry
     - escrow_public_key
     properties:
       buyer_public_key:
         "$ref": "#/definitions/base58"
       offer_amount:
-        type: number
-        minimum: 0
+        type: string
+        pattern: "^[0-9]{1,20}$"
       offer_currency:
         type: string
         minLength: 1
@@ -40,9 +42,14 @@ properties:
         format: date-time
       escrow_public_key:
         "$ref": "#/definitions/base58"
+      payment_asset_id:
+        "$ref": "#/definitions/sha3_hexdigest"
+      requestCreationTimestamp:
+        type: string
       offer_notes:
         type: string
         maxLength: 1000
+    additionalProperties: true
   inputs:
     type: array
     minItems: 1

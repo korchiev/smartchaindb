@@ -20,8 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def make_error(status_code, message=None):
-    tx = request.get_json(force=True)
-    error, tx, tx_obj = validate_schema_definition(tx)
+    # Don't re-parse or re-validate the request body here to avoid recursion
     if status_code == 404 and message is None:
         message = "Not found"
 
@@ -31,13 +30,6 @@ def make_error(status_code, message=None):
 
     logger.error(
         "HTTP API error: %(status)s - %(method)s:%(path)s - %(message)s", request_info
-    )
-    log_metric(
-        "initial_validation_failed",
-        tx_obj.metadata["requestCreationTimestamp"],
-        tx_obj.operation,
-        tx_obj._id,
-        None
     )
 
 

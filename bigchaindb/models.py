@@ -41,6 +41,7 @@ class Transaction(Transaction):
                 Transaction.INTEREST,
                 Transaction.REQUEST_FOR_QUOTE,
                 Transaction.ACCEPT,
+                Transaction.ADVERTISEMENT,
             ]
             and not self.inputs_valid(input_conditions, bigchain)
         ):

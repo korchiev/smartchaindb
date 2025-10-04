@@ -13,15 +13,21 @@ required:
 - inputs
 properties:
   asset:
+    type: object
     additionalProperties: false
     properties:
       id:
         "$ref": "#/definitions/sha3_hexdigest"
+      data:
+        anyOf:
+          - type: object
+            additionalProperties: true
+          - type: "null"
     required:
     - id
   metadata:
     type: object
-    additionalProperties: false
+    additionalProperties: true
     required:
     - status
     - advertiser_public_key
@@ -43,10 +49,15 @@ properties:
   inputs:
     type: array
     title: "Transaction inputs"
-    minItems: 1
     maxItems: 1
+    minItems: 1
     items:
-      "$ref": "#/definitions/input"
+      type: "object"
+      required:
+        - fulfills
+      properties:
+        fulfills:
+          type: "null"
 definitions:
   sha3_hexdigest:
     pattern: "[0-9a-f]{64}"
@@ -54,18 +65,3 @@ definitions:
   base58:
     pattern: "[1-9a-zA-Z^OIl]{43,44}"
     type: string
-  input:
-    type: object
-    required:
-    - fulfills
-    properties:
-      fulfills:
-        type: object
-        required:
-        - txid
-        - output
-        properties:
-          txid:
-            type: string
-          output:
-            type: integer

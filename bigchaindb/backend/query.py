@@ -493,3 +493,170 @@ def store_accept_tx_updates(conn, accept_id, update):
 def get_uncompleted_accept_tx(conn):
     """Returns not-committed accept tx information through recovery logs."""
     raise NotImplementedError
+
+
+@singledispatch
+def get_advertisements_by_status(conn, status):
+    """Get all advertisements with a specific status.
+    
+    Args:
+        conn: Database connection
+        status: Status to filter by (OPEN, LOCKED, CLOSED)
+        
+    Returns:
+        Cursor of advertisement transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_advertisements_by_asset(conn, asset_id):
+    """Get all advertisements for a specific asset.
+    
+    Args:
+        conn: Database connection
+        asset_id: ID of the asset
+        
+    Returns:
+        Cursor of advertisement transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_open_advertisements_by_asset(conn, asset_id):
+    """Get all OPEN advertisements for a specific asset.
+    
+    Args:
+        conn: Database connection
+        asset_id: Asset ID to filter by
+        
+    Returns:
+        Cursor of OPEN advertisement transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_open_advertisements(conn):
+    """Get all OPEN advertisements.
+    
+    Args:
+        conn: Database connection
+        
+    Returns:
+        Cursor of OPEN advertisement transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_buy_offers_by_advertisement(conn, advertisement_id):
+    """Get all buy offers for a specific advertisement.
+    
+    Args:
+        conn: Database connection
+        advertisement_id: ID of the advertisement
+        
+    Returns:
+        Cursor of buy offer transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_sell_offers_by_advertisement(conn, advertisement_id):
+    """Get all sell offers for a specific advertisement.
+    
+    Args:
+        conn: Database connection
+        advertisement_id: ID of the advertisement
+        
+    Returns:
+        Cursor of sell offer transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_request_returns_by_advertisement(conn, advertisement_id):
+    """Get all request returns for a specific advertisement.
+    
+    Args:
+        conn: Database connection
+        advertisement_id: ID of the advertisement
+        
+    Returns:
+        Cursor of request return transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_accept_returns_by_request_return(conn, request_return_id):
+    """Get all ACCEPT_RETURN transactions for a given REQUEST_RETURN transaction.
+    
+    Args:
+        conn: Database connection
+        request_return_id: ID of the request return transaction
+        
+    Returns:
+        Cursor of accept return transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_buy_offers_by_buyer(conn, buyer_public_key):
+    """Get all buy offers from a specific buyer.
+    
+    Args:
+        conn: Database connection
+        buyer_public_key: Public key of the buyer
+        
+    Returns:
+        Cursor of buy offer transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_sell_transactions_by_buy_offer(conn, buy_offer_id):
+    """Get all sell transactions for a specific buy offer.
+    
+    Args:
+        conn: Database connection
+        buy_offer_id: ID of the buy offer transaction
+        
+    Returns:
+        Cursor of sell transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_return_requests_by_sale(conn, sell_transaction_id):
+    """Get all return requests for a specific sale.
+    
+    Args:
+        conn: Database connection
+        sell_transaction_id: ID of the sell transaction
+        
+    Returns:
+        Cursor of return request transactions
+    """
+    raise NotImplementedError
+
+
+@singledispatch
+def get_return_requests_by_status(conn, status):
+    """Get all return requests by status.
+    
+    Args:
+        conn: Database connection
+        status: Status to filter by
+        
+    Returns:
+        Cursor of return request transactions
+    """
+    raise NotImplementedError

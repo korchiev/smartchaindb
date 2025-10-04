@@ -2,16 +2,16 @@
 
 ## Overview
 
-The `SELL` transaction type completes the sale process by accepting a buy offer and executing two atomic transfer transactions: one transferring the asset ownership to the buyer, and another transferring the payment from escrow to the seller. This ensures secure, simultaneous completion of both the asset and payment transfers, with the escrow system providing security for both parties.
+The `SELL` transaction type completes the sale process by accepting a buy offer and executing an atomic transfer. It transfers the asset ownership to the buyer while creating a payment output for the seller. The transaction validates that a valid BUY_OFFER with escrowed funds exists, ensuring both parties' interests are protected.
 
 ## Key Features
 
-- **Two Atomic Transfers**: Asset ownership and payment transfer happen simultaneously
-- **Escrow Integration**: Payment automatically comes from escrow created by BUY_OFFER
-- **Asset Transfer**: Securely transfers asset ownership to buyer
+- **Atomic Asset Transfer**: Asset ownership transfer happens on-chain with UTXO spending
+- **Escrow Validation**: Validates that escrowed payment exists from BUY_OFFER
+- **Dual Outputs**: Creates two outputs - asset to buyer, payment value to seller
 - **Buy Offer Validation**: Must reference a valid, existing buy offer
 - **Advertisement Status Control**: Prevents multiple sales and ensures proper flow
-- **Secure Payment**: Payment transfer is automatic and secure through escrow
+- **Simplified Payment**: Payment output represents value transfer (validated against escrow)
 
 ## Transaction Structure
 
@@ -19,38 +19,45 @@ The `SELL` transaction type completes the sale process by accepting a buy offer 
 ```json
 {
   "id": "asset_1234567890abcdef",
-  "buy_offer_id": "buy_offer_abcdef123456"
+  "data": {
+    "buy_offer_id": "buy_offer_abcdef123456"
+  }
 }
 ```
 
 - **`id`**: The asset ID being sold (SHA3 hexdigest)
-- **`buy_offer_id`**: The buy offer ID being accepted (SHA3 hexdigest)
+- **`data.buy_offer_id`**: The buy offer ID being accepted (SHA3 hexdigest)
 
 ### Metadata
 ```json
 {
   "seller_public_key": "seller_public_key_here",
   "buyer_public_key": "buyer_public_key_here",
-  "sale_amount": 1000.00,
+  "sale_amount": "900",
   "sale_currency": "USD",
   "sale_timestamp": "2024-01-15T14:00:00Z",
+  "requestCreationTimestamp": "2024-01-15T14:00:00Z",
   "sale_notes": "Asset sold to buyer via buy offer acceptance"
 }
 ```
 
-- **`seller_public_key`**: Public key of the seller (base58)
-- **`buyer_public_key`**: Public key of the buyer (base58)
-- **`sale_amount`**: Amount of the sale (number)
-- **`sale_currency`**: Currency of the sale (string)
-- **`sale_timestamp`**: When the sale was executed (ISO 8601)
-- **`sale_notes`**: Optional notes about the sale (string)
+- **`seller_public_key`**: Public key of the seller (base58, required)
+- **`buyer_public_key`**: Public key of the buyer (base58, required)
+- **`sale_amount`**: Amount of the sale as integer string (required)
+- **`sale_currency`**: Currency of the sale (string, required)
+- **`sale_timestamp`**: When the sale was executed (ISO 8601, required)
+- **`requestCreationTimestamp`**: Transaction creation timestamp (ISO 8601, required)
+- **`sale_notes`**: Optional notes about the sale (string, optional)
 
 ### Inputs
-- **Asset Input**: References the asset being sold (owned by seller)
+- **Single Input**: References the seller's asset being sold (UTXO from CREATE transaction)
+- The input must be owned by the seller and properly signed
 
 ### Outputs
-- **Asset Output**: Transfers asset ownership to buyer
-- **Payment Output**: Transfers payment from escrow to seller
+- **Output 1 (Asset Transfer)**: Amount "1", transfers asset ownership to buyer's public key
+- **Output 2 (Payment Value)**: Amount equals sale_amount, assigned to seller's public key
+  - Represents the payment value (validated against BUY_OFFER escrow)
+  - Not a UTXO spend of the escrow, but a new output creation
 
 ## Validation Rules
 
@@ -74,17 +81,22 @@ The `SELL` transaction type completes the sale process by accepting a buy offer 
 - Prevents multiple sales of the same asset
 - Ensures proper transaction flow
 
-### 5. **Escrow Integration**
-- Payment automatically comes from escrow created by BUY_OFFER
-- No need for separate payment handling
-- Secure, automatic payment transfer
+### 5. **Escrow Validation**
+- Validates that BUY_OFFER exists with escrowed funds
+- Ensures escrow amount matches sale_amount
+- BUY_OFFER must have created escrow output
 
-### 6. **Two Atomic Transfers**
-- Asset ownership transfer to buyer
-- Payment transfer from escrow to seller
+### 6. **Asset Transfer (On-Chain)**
+- Asset ownership transfers via UTXO spending
+- Input: Seller's asset (from CREATE transaction)
+- Output 1: Asset to buyer with amount "1"
+
+### 7. **Payment Representation**
+- Output 2 represents payment value to seller
+- value creation validated against escrow
 - Both transfers happen simultaneously for security
 
-### 7. **Input Requirements**
+### 8. **Input Requirements**
 - Must have exactly one input for the asset being sold
 - Input must be unspent and owned by the seller
 - Valid cryptographic signatures required
@@ -166,11 +178,11 @@ def get_sell_transactions_by_seller(conn, seller_public_key):
 4. **Two Atomic Transfers**: Execute asset and payment transfers simultaneously
 5. **Status Updates**: Update advertisement status to reflect sale
 
-### Escrow Integration
-1. **Escrow Source**: Payment comes from escrow created by BUY_OFFER
-2. **Automatic Transfer**: No manual payment handling required
-3. **Security**: Both parties are protected through escrow system
-4. **Refund Capability**: Escrow can handle returns if needed
+### Escrow Validation
+1. **Escrow Source**: Validates BUY_OFFER created escrow output
+2. **Amount Matching**: Verifies escrow amount matches sale amount
+3. **Security**: Both parties are protected through escrow validation
+4. **Simplified Model**: Payment value represented, not spent as UTXO
 
 ### Validation Flow
 1. **Input validation**: Verify asset ownership and signatures
@@ -183,9 +195,9 @@ def get_sell_transactions_by_seller(conn, seller_public_key):
 ## Integration Notes
 
 ### With BUY_OFFER Transaction
-- SELL transaction consumes the escrow output created by BUY_OFFER
-- Payment transfer is automatic and secure
-- No need for separate payment handling
+- SELL transaction validates the escrow output created by BUY_OFFER
+- Payment value is represented in SELL outputs (not spent as UTXO)
+- Escrow validation ensures payment security
 
 ### With Advertisement System
 - SELL transaction references advertisement through buy offer
@@ -205,21 +217,21 @@ def get_sell_transactions_by_seller(conn, seller_public_key):
 - Index on `asset.id` for asset-based queries
 
 ### Transaction Size
-- Two outputs required for atomic transfers
-- Efficient transaction structure
+- One input (asset) and two outputs (asset transfer + payment value)
+- Efficient transaction structure with simplified atomic swap
 - Minimal blockchain bloat
 
 ## Security Features
 
-### Atomic Transfers
-- Both asset and payment transfers happen simultaneously
-- No risk of partial completion
-- Ensures transaction integrity
+### Atomic Asset Transfer
+- Asset ownership transfer is on-chain via UTXO spending
+- Single transaction ensures atomicity
+- No risk of partial asset transfer
 
-### Escrow Protection
-- Payment comes from secure escrow account
-- No direct payment handling required
-- Automatic security through escrow system
+### Escrow Validation
+- Payment value validated against BUY_OFFER escrow
+- Ensures escrow was properly created before SELL
+- Protects both buyer and seller interests
 
 ### Signature Validation
 - All inputs must be properly signed

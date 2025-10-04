@@ -292,6 +292,40 @@ class BigchainDB(object):
         for txid in txids:
             yield self.get_transaction(txid)
 
+    def get_advertisements_by_status(self, status):
+        """Get all advertisements with a specific status.
+        
+        Args:
+            status: Status to filter by (OPEN, LOCKED, CLOSED)
+            
+        Returns:
+            Generator of advertisement transactions
+        """
+        cursor = backend.query.get_advertisements_by_status(self.connection, status)
+        for tx_doc in cursor:
+            yield Transaction.from_dict(tx_doc)
+
+    def get_open_advertisements_by_asset(self, asset_id):
+        """Get all OPEN advertisements for a specific asset.
+        
+        Args:
+            asset_id: Asset ID to filter by
+            
+        Returns:
+            Generator of OPEN advertisement transactions
+        """
+        cursor = backend.query.get_open_advertisements_by_asset(self.connection, asset_id)
+        for tx_doc in cursor:
+            yield Transaction.from_dict(tx_doc)
+
+    def get_open_advertisements(self):
+        """Get all OPEN advertisements.
+        
+        Returns:
+            Generator of OPEN advertisement transactions
+        """
+        return self.get_advertisements_by_status('OPEN')
+
     def get_locked_bid_txids_for_rfq(self, rfq_tx_id):
         """Get a list of bid transactions for a RFQ transaction
         locked by the special smartchaindb account.

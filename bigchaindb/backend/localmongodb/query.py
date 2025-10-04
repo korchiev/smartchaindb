@@ -271,6 +271,28 @@ def get_advertisements_by_asset(conn, asset_id):
 
 
 @register_query(LocalMongoDBConnection)
+def get_open_advertisements_by_asset(conn, asset_id):
+    """Get all OPEN advertisements for a specific asset.
+    
+    Args:
+        conn: Database connection
+        asset_id: Asset ID to filter by
+        
+    Returns:
+        Cursor of OPEN advertisement transactions
+    """
+    query = {
+        "$and": [
+            {"operation": "ADVERTISEMENT"},
+            {"asset.id": asset_id},
+            {"metadata.status": "OPEN"}
+        ]
+    }
+    cursor = conn.run(conn.collection("transactions").find(query))
+    return cursor
+
+
+@register_query(LocalMongoDBConnection)
 def get_open_advertisements(conn):
     """Get all OPEN advertisements.
     
@@ -622,10 +644,12 @@ def get_uncompleted_accept_tx(conn):
         )
     )
 
- 
- @ r e g i s t e r _ q u e r y ( L o c a l M o n g o D B C o n n e c t i o n ) 
- 
- d e f   g e t _ a c c e p t _ r e t u r n s _ b y _ r e q u e s t _ r e t u r n ( c o n n ,   r e q u e s t _ r e t u r n _ i d ) : 
- 
- d e f   g e t _ a c c e p t _ r e t u r n s _ b y _ r e q u e s t _ r e t u r n ( c o n n ,   r e q u e s t _ r e t u r n _ i d ) :  
- 
+
+@register_query(LocalMongoDBConnection)
+def get_accept_returns_by_request_return(conn, request_return_id):
+    """Get all ACCEPT_RETURN transactions for a given REQUEST_RETURN transaction."""
+    query = {
+        'operation': 'ACCEPT_RETURN',
+        'asset.data.request_return_id': request_return_id
+    }
+    return conn.collection('transactions').find(query)
