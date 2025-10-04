@@ -1885,6 +1885,24 @@ class Transaction(object):
     def validate_schema(cls, tx):
         pass
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # DEPRECATED: Legacy Python Validation Methods
+    # ═══════════════════════════════════════════════════════════════════════════
+    # The following validation methods are DEPRECATED and no longer used.
+    # All validation is now handled by the SHACL microservice using declarative
+    # constraints. These methods are kept for reference and backward compatibility
+    # but are NOT called in the current validation flow (see models.py).
+    #
+    # SHACL validation provides:
+    #   - Syntactic validation (structure, types, patterns)
+    #   - Semantic validation (business rules, constraints)
+    #   - State consistency (MongoDB queries for cross-transaction checks)
+    #
+    # Migration Note: If you need to add new validation rules, create/update
+    # SHACL shape files (.ttl) in bigchaindb/backend/localshacl/shapes/shapes/
+    # and/or update the state validation logic in the SHACL service (index.js).
+    # ═══════════════════════════════════════════════════════════════════════════
+
     def validate_transfer_inputs(self, bigchain, current_transactions=[]):
         # store the inputs so that we can check if the asset ids match
         input_txs = []

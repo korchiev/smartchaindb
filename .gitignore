@@ -89,9 +89,22 @@ docs/server/source/http-samples
 terraform.tfstate
 terraform.tfstate.backup
 
-# tendermint data
+# ═══════════════════════════════════════════════════════════
+# Docker Runtime Data (Generated during execution)
+# ═══════════════════════════════════════════════════════════
+
+# Tendermint runtime data
 tmdata/data
 network/*/data
+
+# Docker data directory - Runtime databases and state
+docker/data/tendermint/data/
+docker/data/tendermint/config/addrbook.json
+docker/data/tendermint/config/node_key.json
+docker/data/tendermint/config/priv_validator_key.json
+docker/data/tendermint/config/write-file-atomic-*
+
+# Keep only template configs (genesis.json, config.toml are OK)
 
 # Docs that are fetched at build time
 docs/contributing/source/cross-project-policies/*.md

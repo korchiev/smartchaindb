@@ -4,10 +4,14 @@
 # Code is Apache-2.0 and docs are CC-BY-4.0
 
 from bigchaindb.backend.schema import validate_language_key
-from bigchaindb.common.exceptions import InvalidSignature, DuplicateTransaction
+from bigchaindb.common.exceptions import InvalidSignature, DuplicateTransaction, ValidationError
 from bigchaindb.common.schema import validate_transaction_schema
 from bigchaindb.common.transaction import Transaction
 from bigchaindb.common.utils import validate_txn_obj, validate_key
+from bigchaindb.common.shacl_validator import get_shacl_validator
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Transaction(Transaction):
@@ -16,89 +20,93 @@ class Transaction(Transaction):
     DATA = "data"
 
     def validate(self, bigchain, current_transactions=[]):
-        """Validate transaction spend
+        """
+        Validate transaction using SHACL validation service.
+        
+        All validation logic (syntactic, semantic, and state consistency)
+        is now handled by the SHACL microservice using declarative constraints.
+        
         Args:
             bigchain (BigchainDB): an instantiated bigchaindb.BigchainDB object.
+            current_transactions: list of transactions in current block
+            
         Returns:
-            The transaction (Transaction) if the transaction is valid else it
-            raises an exception describing the reason why the transaction is
-            invalid.
+            The transaction (Transaction) if valid
+            
         Raises:
-            ValidationError: If the transaction is invalid
+            ValidationError: If SHACL validation fails
+            DuplicateTransaction: If transaction already exists
         """
-        input_conditions = []
+        
+        # ═══════════════════════════════════════════════════════════════
+        # Check for duplicates in current block or database
+        # ═══════════════════════════════════════════════════════════════
         duplicates = any(txn for txn in current_transactions if txn.id == self.id)
         if bigchain.is_committed(self.id) or duplicates:
             raise DuplicateTransaction(
                 "transaction `{}` already exists".format(self.id)
             )
-
-        if (
-            self.operation
-            in [
-                Transaction.CREATE,
-                Transaction.PRE_REQUEST,
-                Transaction.INTEREST,
-                Transaction.REQUEST_FOR_QUOTE,
-                Transaction.ACCEPT,
-                Transaction.ADVERTISEMENT,
-            ]
-            and not self.inputs_valid(input_conditions, bigchain)
-        ):
-            raise InvalidSignature("Transaction signature is invalid.")
-
-        if self.operation == Transaction.TRANSFER:
-            self.validate_transfer_inputs(bigchain, current_transactions)
-        elif self.operation == Transaction.INTEREST:
-            self.validate_interest(bigchain, current_transactions)
-        elif self.operation == Transaction.REQUEST_FOR_QUOTE:
-            self.validate_rfq(bigchain, current_transactions)
-        elif self.operation == Transaction.BID:
-            self.validate_bid(bigchain, current_transactions)
-        elif self.operation == Transaction.ACCEPT:
-            self.validate_accept(bigchain, current_transactions)
-        elif self.operation == Transaction.RETURN:
-            self.validate_return(bigchain, current_transactions)
-        elif self.operation == Transaction.ADVERTISEMENT:
-            self.validate_advertisement_inputs(bigchain, current_transactions)
-        elif self.operation == Transaction.BUY_OFFER:
-            self.validate_buy_offer_inputs(bigchain, current_transactions)
-        elif self.operation == Transaction.SELL:
-            self.validate_sell_inputs(bigchain, current_transactions)
-        elif self.operation == Transaction.REQUEST_RETURN:
-            self.validate_request_return_inputs(bigchain, current_transactions)
-        elif self.operation == Transaction.ACCEPT_RETURN:
-            self.validate_accept_return_inputs(bigchain, current_transactions)
-
+        
+        # ═══════════════════════════════════════════════════════════════
+        # SHACL VALIDATION - ALL-IN-ONE
+        # Handles: syntactic, semantic, and state consistency
+        # ═══════════════════════════════════════════════════════════════
+        shacl_validator = get_shacl_validator()
+        
+        if not shacl_validator.enabled:
+            raise ValidationError(
+                "SHACL validation is disabled. "
+                "Set BIGCHAINDB_SHACL_ENABLED=true to enable validation."
+            )
+        
+        logger.debug(f"Validating {self.operation} transaction {self.id} via SHACL")
+        
+        conforms, results = shacl_validator.validate_transaction(self.to_dict())
+        
+        if not conforms:
+            # Extract error messages from SHACL results
+            error_messages = []
+            for result in results:
+                if isinstance(result.get('message'), list):
+                    error_messages.extend(result['message'])
+                else:
+                    error_messages.append(str(result.get('message', 'Unknown error')))
+            
+            error_summary = '; '.join(error_messages[:5])  # Show first 5 errors
+            
+            logger.error(
+                f"SHACL validation failed for {self.operation} transaction {self.id}: "
+                f"{error_summary}"
+            )
+            
+            # Log all errors in debug mode
+            for i, result in enumerate(results, 1):
+                logger.debug(f"  Error {i}: {result.get('message', 'Unknown')}")
+                logger.debug(f"    Path: {result.get('path')}")
+                logger.debug(f"    Severity: {result.get('severity')}")
+            
+            raise ValidationError(f"SHACL validation failed: {error_summary}")
+        
+        logger.info(f"✓ SHACL validation passed for {self.operation} transaction {self.id}")
+        
         return self
 
     @classmethod
     def from_dict(cls, tx_body):
+        """Create transaction from dictionary (no validation during deserialization)"""
         return super().from_dict(tx_body, False)
 
     @classmethod
     def validate_schema(cls, tx_body):
+        """
+        Validate transaction schema.
+        
+        Note: This is called during transaction creation/parsing.
+        The comprehensive validation happens in validate() method via SHACL.
+        """
         validate_transaction_schema(tx_body)
-        validate_txn_obj(cls.ASSET, tx_body[cls.ASSET], cls.DATA, validate_key)
-        validate_txn_obj(cls.METADATA, tx_body, cls.METADATA, validate_key)
-        validate_language_key(tx_body[cls.ASSET], cls.DATA)
-        validate_language_key(tx_body, cls.METADATA)
 
-
-class FastTransaction:
-    """A minimal wrapper around a transaction dictionary. This is useful for
-    when validation is not required but a routine expects something that looks
-    like a transaction, for example during block creation.
-
-    Note: immutability could also be provided
-    """
-
-    def __init__(self, tx_dict):
-        self.data = tx_dict
-
-    @property
-    def id(self):
-        return self.data["id"]
-
-    def to_dict(self):
-        return self.data
+    @classmethod
+    def from_db(cls, bigchain, tx_dict):
+        """Reconstruct transaction from database"""
+        return cls.from_dict(tx_dict)

@@ -1,0 +1,82 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix bdb: <http://bigchaindb.com/ns#> .
+
+# CREATE Transaction Shape
+bdb:CreateTransactionShape a sh:NodeShape ;
+    sh:targetClass bdb:CreateTransaction ;
+    sh:property [
+        sh:path bdb:operation ;
+        sh:hasValue "CREATE" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Operation must be 'CREATE'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:version ;
+        sh:hasValue "2.0" ;
+        sh:minCount 1 ;
+        sh:message "Version must be '2.0'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:asset ;
+        sh:node bdb:CreateAssetShape ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset is required for CREATE transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:metadata ;
+        sh:node bdb:CreateMetadataShape ;
+        sh:minCount 1 ;
+        sh:message "Metadata is required for CREATE transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:inputs ;
+        sh:minCount 1 ;
+        sh:message "CREATE transaction must have at least one input" ;
+    ] ;
+    sh:property [
+        sh:path bdb:outputs ;
+        sh:minCount 1 ;
+        sh:message "CREATE transaction must have at least one output" ;
+    ] .
+
+# CREATE Asset Shape
+bdb:CreateAssetShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:data ;
+        sh:node bdb:AssetDataShape ;
+        sh:minCount 1 ;
+        sh:message "Asset data is required" ;
+    ] .
+
+# Asset Data Shape (for CREATE)
+bdb:AssetDataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:machineIdentifier ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "machineIdentifier is required in asset data" ;
+    ] ;
+    sh:property [
+        sh:path bdb:capability ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "capability is required in asset data" ;
+    ] ;
+    sh:property [
+        sh:path bdb:capabilityParameters ;
+        sh:datatype xsd:string ;
+        sh:message "capabilityParameters can be provided" ;
+    ] .
+
+# CREATE Metadata Shape
+bdb:CreateMetadataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:requestCreationTimestamp ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "requestCreationTimestamp is required in metadata" ;
+    ] .
+

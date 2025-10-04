@@ -1,0 +1,117 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix bdb: <http://bigchaindb.com/ns#> .
+
+# ADVERTISEMENT Transaction Shape
+bdb:AdvertisementTransactionShape a sh:NodeShape ;
+    sh:targetClass bdb:AdvertisementTransaction ;
+    sh:property [
+        sh:path bdb:operation ;
+        sh:hasValue "ADVERTISEMENT" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Operation must be 'ADVERTISEMENT'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:version ;
+        sh:hasValue "2.0" ;
+        sh:minCount 1 ;
+        sh:message "Version must be '2.0'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:asset ;
+        sh:node bdb:AdvertisementAssetShape ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset is required for ADVERTISEMENT transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:metadata ;
+        sh:node bdb:AdvertisementMetadataShape ;
+        sh:minCount 1 ;
+        sh:message "Metadata is required for ADVERTISEMENT transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:inputs ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "ADVERTISEMENT transaction must have exactly one input" ;
+    ] ;
+    sh:property [
+        sh:path bdb:outputs ;
+        sh:minCount 1 ;
+        sh:message "ADVERTISEMENT transaction must have at least one output" ;
+    ] .
+
+# ADVERTISEMENT Asset Shape
+bdb:AdvertisementAssetShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset ID must be a 64-character hexadecimal string (SHA3 hash)" ;
+    ] .
+
+# ADVERTISEMENT Metadata Shape
+bdb:AdvertisementMetadataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:status ;
+        sh:datatype xsd:string ;
+        sh:in ("OPEN" "LOCKED" "CLOSED") ;
+        sh:minCount 1 ;
+        sh:message "status must be one of: OPEN, LOCKED, CLOSED" ;
+    ] ;
+    sh:property [
+        sh:path bdb:advertiser_public_key ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "advertiser_public_key must be a valid base58 string (43-44 chars)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:price ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9]+(\\.[0-9]{1,2})?$" ;
+        sh:minCount 1 ;
+        sh:message "price must be a valid decimal string" ;
+    ] ;
+    sh:property [
+        sh:path bdb:description ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "description is required" ;
+    ] ;
+    sh:property [
+        sh:path bdb:category ;
+        sh:datatype xsd:string ;
+        sh:message "category can be provided" ;
+    ] ;
+    sh:property [
+        sh:path bdb:condition ;
+        sh:datatype xsd:string ;
+        sh:message "condition can be provided" ;
+    ] ;
+    sh:property [
+        sh:path bdb:location ;
+        sh:datatype xsd:string ;
+        sh:message "location can be provided" ;
+    ] ;
+    sh:property [
+        sh:path bdb:contact_info ;
+        sh:datatype xsd:string ;
+        sh:message "contact_info can be provided" ;
+    ] ;
+    sh:property [
+        sh:path bdb:expiry_date ;
+        sh:datatype xsd:dateTime ;
+        sh:message "expiry_date must be a valid ISO 8601 datetime" ;
+    ] ;
+    sh:property [
+        sh:path bdb:requestCreationTimestamp ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "requestCreationTimestamp is required" ;
+    ] .
+

@@ -92,6 +92,12 @@ config = {
         "fmt_logfile": log_config["formatters"]["file"]["format"],
         "granular_levels": {},
     },
+    "shacl": {
+        # SHACL validation settings (REQUIRED - all validation is now SHACL-based)
+        "enabled": True,  # Must be True - SHACL is the primary validation system
+        "endpoint": "http://shacleng:3000",  # SHACL microservice endpoint
+        "timeout": 10,  # HTTP request timeout in seconds (increased for state queries)
+    },
 }
 
 # We need to maintain a backup copy of the original config dict in case

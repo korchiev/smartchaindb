@@ -1,0 +1,120 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix bdb: <http://bigchaindb.com/ns#> .
+
+# SELL Transaction Shape
+bdb:SellTransactionShape a sh:NodeShape ;
+    sh:targetClass bdb:SellTransaction ;
+    sh:property [
+        sh:path bdb:operation ;
+        sh:hasValue "SELL" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Operation must be 'SELL'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:version ;
+        sh:hasValue "2.0" ;
+        sh:minCount 1 ;
+        sh:message "Version must be '2.0'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:asset ;
+        sh:node bdb:SellAssetShape ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset is required for SELL transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:metadata ;
+        sh:node bdb:SellMetadataShape ;
+        sh:minCount 1 ;
+        sh:message "Metadata is required for SELL transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:inputs ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "SELL transaction must have exactly one input (seller's asset)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:outputs ;
+        sh:minCount 2 ;
+        sh:maxCount 2 ;
+        sh:message "SELL transaction must have exactly two outputs (asset to buyer, payment to seller)" ;
+    ] .
+
+# SELL Asset Shape
+bdb:SellAssetShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset ID must be a 64-character hexadecimal string (SHA3 hash)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:data ;
+        sh:node bdb:SellAssetDataShape ;
+        sh:minCount 1 ;
+        sh:message "Asset data is required for SELL" ;
+    ] .
+
+# SELL Asset Data Shape
+bdb:SellAssetDataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:buy_offer_id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:message "buy_offer_id must be a valid SHA3 hash" ;
+    ] .
+
+# SELL Metadata Shape
+bdb:SellMetadataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:seller_public_key ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "seller_public_key must be a valid base58 string (43-44 chars)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:buyer_public_key ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "buyer_public_key must be a valid base58 string (43-44 chars)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:sale_amount ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9]{1,20}$" ;
+        sh:minCount 1 ;
+        sh:message "sale_amount must be a positive integer string (1-20 digits)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:sale_currency ;
+        sh:datatype xsd:string ;
+        sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "sale_currency is required and must be a non-empty string" ;
+    ] ;
+    sh:property [
+        sh:path bdb:sale_timestamp ;
+        sh:datatype xsd:dateTime ;
+        sh:message "sale_timestamp must be a valid ISO 8601 datetime" ;
+    ] ;
+    sh:property [
+        sh:path bdb:requestCreationTimestamp ;
+        sh:datatype xsd:string ;
+        sh:message "requestCreationTimestamp can be provided" ;
+    ] ;
+    sh:property [
+        sh:path bdb:sale_notes ;
+        sh:datatype xsd:string ;
+        sh:maxLength 1000 ;
+        sh:message "sale_notes can be up to 1000 characters" ;
+    ] .
+

@@ -1,0 +1,132 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix bdb: <http://bigchaindb.com/ns#> .
+
+# BUY_OFFER Transaction Shape
+bdb:BuyOfferTransactionShape a sh:NodeShape ;
+    sh:targetClass bdb:BuyOfferTransaction ;
+    sh:property [
+        sh:path bdb:operation ;
+        sh:hasValue "BUY_OFFER" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Operation must be 'BUY_OFFER'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:version ;
+        sh:hasValue "2.0" ;
+        sh:minCount 1 ;
+        sh:message "Version must be '2.0'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:asset ;
+        sh:node bdb:BuyOfferAssetShape ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset is required for BUY_OFFER transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:metadata ;
+        sh:node bdb:BuyOfferMetadataShape ;
+        sh:minCount 1 ;
+        sh:message "Metadata is required for BUY_OFFER transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:inputs ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "BUY_OFFER transaction must have exactly one input" ;
+    ] ;
+    sh:property [
+        sh:path bdb:outputs ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "BUY_OFFER transaction must have exactly one output (escrow)" ;
+    ] .
+
+# BUY_OFFER Asset Shape
+bdb:BuyOfferAssetShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset ID must be a 64-character hexadecimal string (SHA3 hash)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:data ;
+        sh:node bdb:BuyOfferAssetDataShape ;
+        sh:minCount 1 ;
+        sh:message "Asset data is required for BUY_OFFER" ;
+    ] .
+
+# BUY_OFFER Asset Data Shape
+bdb:BuyOfferAssetDataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:advertisement_id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:message "advertisement_id must be a valid SHA3 hash" ;
+    ] .
+
+# BUY_OFFER Metadata Shape
+bdb:BuyOfferMetadataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:buyer_public_key ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "buyer_public_key must be a valid base58 string (43-44 chars)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:escrow_public_key ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "escrow_public_key must be a valid base58 string (43-44 chars)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:offer_amount ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9]{1,20}$" ;
+        sh:minCount 1 ;
+        sh:message "offer_amount must be a positive integer string (1-20 digits)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:offer_currency ;
+        sh:datatype xsd:string ;
+        sh:minLength 1 ;
+        sh:message "offer_currency must be a non-empty string" ;
+    ] ;
+    sh:property [
+        sh:path bdb:offer_timestamp ;
+        sh:datatype xsd:dateTime ;
+        sh:message "offer_timestamp must be a valid ISO 8601 datetime" ;
+    ] ;
+    sh:property [
+        sh:path bdb:offer_expiry ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:message "offer_expiry is required and must be a valid ISO 8601 datetime" ;
+    ] ;
+    sh:property [
+        sh:path bdb:payment_asset_id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:message "payment_asset_id must be a valid SHA3 hash if provided" ;
+    ] ;
+    sh:property [
+        sh:path bdb:requestCreationTimestamp ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "requestCreationTimestamp is required" ;
+    ] ;
+    sh:property [
+        sh:path bdb:offer_notes ;
+        sh:datatype xsd:string ;
+        sh:maxLength 1000 ;
+        sh:message "offer_notes can be up to 1000 characters" ;
+    ] .
+

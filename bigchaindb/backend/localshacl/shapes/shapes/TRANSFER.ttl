@@ -1,0 +1,49 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix bdb: <http://bigchaindb.com/ns#> .
+
+# TRANSFER Transaction Shape
+bdb:TransferTransactionShape a sh:NodeShape ;
+    sh:targetClass bdb:TransferTransaction ;
+    sh:property [
+        sh:path bdb:operation ;
+        sh:hasValue "TRANSFER" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Operation must be 'TRANSFER'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:version ;
+        sh:hasValue "2.0" ;
+        sh:minCount 1 ;
+        sh:message "Version must be '2.0'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:asset ;
+        sh:node bdb:TransferAssetShape ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset reference is required for TRANSFER transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:inputs ;
+        sh:minCount 1 ;
+        sh:message "TRANSFER transaction must have at least one input" ;
+    ] ;
+    sh:property [
+        sh:path bdb:outputs ;
+        sh:minCount 1 ;
+        sh:message "TRANSFER transaction must have at least one output" ;
+    ] .
+
+# TRANSFER Asset Shape (reference only)
+bdb:TransferAssetShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset ID must be a 64-character hexadecimal string (SHA3 hash)" ;
+    ] .
+
