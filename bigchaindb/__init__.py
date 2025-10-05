@@ -97,6 +97,10 @@ config = {
         "enabled": True,  # Must be True - SHACL is the primary validation system
         "endpoint": "http://shacleng:3000",  # SHACL microservice endpoint
         "timeout": 10,  # HTTP request timeout in seconds (increased for state queries)
+        # Performance optimization: result caching
+        "cache_enabled": True,      # Enable validation result caching
+        "cache_ttl": 60,           # Cache time-to-live in seconds
+        "cache_max_size": 1000     # Maximum cached entries (LRU eviction)
     },
 }
 

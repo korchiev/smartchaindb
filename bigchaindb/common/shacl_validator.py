@@ -7,10 +7,15 @@ for declarative transaction validation using RDF and SHACL constraints.
 
 import requests
 import logging
+import time
+from threading import Lock
+from collections import defaultdict
+from datetime import datetime
 from typing import Dict, Any, Tuple, List, Optional
 from bigchaindb import config_utils
 
 logger = logging.getLogger(__name__)
+metrics_logger = logging.getLogger(__name__ + '.metrics')
 
 
 class SHACLValidatorClient:

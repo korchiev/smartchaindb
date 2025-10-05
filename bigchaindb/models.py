@@ -8,8 +8,9 @@ from bigchaindb.common.exceptions import InvalidSignature, DuplicateTransaction,
 from bigchaindb.common.schema import validate_transaction_schema
 from bigchaindb.common.transaction import Transaction
 from bigchaindb.common.utils import validate_txn_obj, validate_key
-from bigchaindb.common.shacl_validator import get_shacl_validator
+from bigchaindb.common.shacl_validator_cached import get_shacl_validator
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +22,11 @@ class Transaction(Transaction):
 
     def validate(self, bigchain, current_transactions=[]):
         """
-        Validate transaction using SHACL validation service.
+        Validate transaction using SHACL validation service with caching.
         
         All validation logic (syntactic, semantic, and state consistency)
         is now handled by the SHACL microservice using declarative constraints.
+        Caching improves performance for the triple-validation pattern.
         
         Args:
             bigchain (BigchainDB): an instantiated bigchaindb.BigchainDB object.
@@ -39,6 +41,23 @@ class Transaction(Transaction):
         """
         
         # ═══════════════════════════════════════════════════════════════
+        # Detect which validation phase we're in by examining call stack
+        # ═══════════════════════════════════════════════════════════════
+        phase = 'UNKNOWN'
+        stack = traceback.extract_stack()
+        
+        for frame in stack:
+            if 'check_tx' in frame.filename or 'check_tx' in frame.name:
+                phase = 'CHECK_TX'
+                break
+            elif 'deliver_tx' in frame.filename or 'deliver_tx' in frame.name:
+                phase = 'DELIVER_TX'
+                break
+            elif 'transactions.py' in frame.filename:  # HTTP API
+                phase = 'HTTP_POST'
+                break
+        
+        # ═══════════════════════════════════════════════════════════════
         # Check for duplicates in current block or database
         # ═══════════════════════════════════════════════════════════════
         duplicates = any(txn for txn in current_transactions if txn.id == self.id)
@@ -48,10 +67,10 @@ class Transaction(Transaction):
             )
         
         # ═══════════════════════════════════════════════════════════════
-        # SHACL VALIDATION - ALL-IN-ONE
+        # SHACL VALIDATION WITH CACHING
         # Handles: syntactic, semantic, and state consistency
         # ═══════════════════════════════════════════════════════════════
-        shacl_validator = get_shacl_validator()
+        shacl_validator = get_shacl_validator(phase=phase)
         
         if not shacl_validator.enabled:
             raise ValidationError(
@@ -59,7 +78,7 @@ class Transaction(Transaction):
                 "Set BIGCHAINDB_SHACL_ENABLED=true to enable validation."
             )
         
-        logger.debug(f"Validating {self.operation} transaction {self.id} via SHACL")
+        logger.debug(f"Validating {self.operation} transaction {self.id} via SHACL (phase={phase})")
         
         conforms, results = shacl_validator.validate_transaction(self.to_dict())
         
@@ -75,8 +94,8 @@ class Transaction(Transaction):
             error_summary = '; '.join(error_messages[:5])  # Show first 5 errors
             
             logger.error(
-                f"SHACL validation failed for {self.operation} transaction {self.id}: "
-                f"{error_summary}"
+                f"SHACL validation failed for {self.operation} transaction {self.id} "
+                f"(phase={phase}): {error_summary}"
             )
             
             # Log all errors in debug mode
@@ -87,7 +106,7 @@ class Transaction(Transaction):
             
             raise ValidationError(f"SHACL validation failed: {error_summary}")
         
-        logger.info(f"✓ SHACL validation passed for {self.operation} transaction {self.id}")
+        logger.debug(f"✓ SHACL validation passed for {self.operation} transaction {self.id} (phase={phase})")
         
         return self
 
