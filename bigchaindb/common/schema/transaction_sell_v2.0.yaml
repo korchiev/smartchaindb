@@ -10,15 +10,19 @@ properties:
     type: object
     additionalProperties: false
     properties:
-      id:
-        "$ref": "#/definitions/sha3_hexdigest"
       data:
-        anyOf:
-          - type: object
-            additionalProperties: true
-          - type: "null"
+        type: object
+        additionalProperties: false
+        properties:
+          id:
+            "$ref": "#/definitions/sha3_hexdigest"
+          buy_offer_id:
+            "$ref": "#/definitions/sha3_hexdigest"
+        required:
+          - id
+          - buy_offer_id
     required:
-      - id
+      - data
   metadata:
     required:
       - seller_public_key

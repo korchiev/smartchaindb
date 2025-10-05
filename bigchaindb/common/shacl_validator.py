@@ -62,6 +62,7 @@ class SHACLValidatorClient:
         try:
             # Convert transaction to Turtle RDF format
             turtle_data = self._convert_to_turtle(tx_dict)
+            logger.debug(f"RDF Turtle data for {operation} transaction:\n{turtle_data}")
             
             # Call SHACL microservice
             response = requests.post(
@@ -150,15 +151,15 @@ class SHACLValidatorClient:
         if metadata:
             turtle += self._serialize_metadata(metadata)
         
-        # Add inputs count
+        # Add inputs
         inputs = tx_dict.get('inputs', [])
         if inputs:
-            turtle += f'    bdb:inputs "{len(inputs)}"^^xsd:integer ;\n'
+            turtle += self._serialize_inputs(inputs)
         
-        # Add outputs count
+        # Add outputs
         outputs = tx_dict.get('outputs', [])
         if outputs:
-            turtle += f'    bdb:outputs "{len(outputs)}"^^xsd:integer ;\n'
+            turtle += self._serialize_outputs(outputs)
         
         # Remove trailing semicolon and newline, add period
         turtle = turtle.rstrip(';\n') + ' .\n'
@@ -186,7 +187,24 @@ class SHACLValidatorClient:
             turtle += "        ]\n"
             turtle += "    ] ;\n"
         
-        # For ADVERTISEMENT, BUY_OFFER, SELL: asset has 'id' and optional 'data'
+        # For UPDATE_ADV, BUY_OFFER, SELL: asset has 'data' with nested fields
+        elif operation in ['UPDATE_ADV', 'BUY_OFFER', 'SELL'] and 'data' in asset:
+            asset_data = asset['data']
+            turtle += "    bdb:asset [\n"
+            turtle += "        bdb:data [\n"
+            
+            for key, value in asset_data.items():
+                if isinstance(value, str):
+                    escaped_value = value.replace('\\', '\\\\').replace('"', '\\"')
+                    turtle += f'            bdb:{key} "{escaped_value}" ;\n'
+                elif isinstance(value, (int, float)):
+                    turtle += f'            bdb:{key} {value} ;\n'
+            
+            turtle = turtle.rstrip(';\n') + '\n'
+            turtle += "        ]\n"
+            turtle += "    ] ;\n"
+        
+        # For ADVERTISEMENT and other operations: asset has 'id' and optional 'data'
         else:
             turtle += "    bdb:asset [\n"
             
@@ -235,6 +253,88 @@ class SHACLValidatorClient:
         
         turtle = turtle.rstrip(';\n') + '\n'
         turtle += "    ] ;\n"
+        
+        return turtle
+    
+    def _serialize_inputs(self, inputs: List[Dict[str, Any]]) -> str:
+        """Serialize inputs field to Turtle."""
+        turtle = ""
+        
+        for i, input_obj in enumerate(inputs):
+            turtle += f"    bdb:inputs [\n"
+            
+            # Add fulfillment
+            if 'fulfillment' in input_obj:
+                turtle += f'        bdb:fulfillment "{input_obj["fulfillment"]}" ;\n'
+            
+            # Add owners_before
+            if 'owners_before' in input_obj:
+                owners = input_obj['owners_before']
+                if isinstance(owners, list):
+                    for owner in owners:
+                        turtle += f'        bdb:owners_before "{owner}" ;\n'
+                else:
+                    turtle += f'        bdb:owners_before "{owners}" ;\n'
+            
+            # Add fulfills (only if it's not None)
+            if 'fulfills' in input_obj and input_obj['fulfills'] is not None:
+                fulfills = input_obj['fulfills']
+                logger.debug(f"Serializing fulfills: {fulfills}")
+                turtle += f'        bdb:fulfills "{fulfills}" ;\n'
+            else:
+                logger.debug(f"Skipping null/missing fulfills")
+            
+            turtle = turtle.rstrip(';\n') + '\n'
+            turtle += f"    ] ;\n"
+        
+        return turtle
+    
+    def _serialize_outputs(self, outputs: List[Dict[str, Any]]) -> str:
+        """Serialize outputs field to Turtle."""
+        turtle = ""
+        
+        for i, output_obj in enumerate(outputs):
+            turtle += f"    bdb:outputs [\n"
+            
+            # Add amount
+            if 'amount' in output_obj:
+                turtle += f'        bdb:amount "{output_obj["amount"]}" ;\n'
+            
+            # Add condition
+            if 'condition' in output_obj:
+                condition = output_obj['condition']
+                turtle += f"        bdb:condition [\n"
+                
+                if 'details' in condition:
+                    details = condition['details']
+                    turtle += f"            bdb:details [\n"
+                    
+                    if 'type' in details:
+                        turtle += f'                bdb:type "{details["type"]}" ;\n'
+                    
+                    if 'public_key' in details:
+                        turtle += f'                bdb:public_key "{details["public_key"]}" ;\n'
+                    
+                    turtle = turtle.rstrip(';\n') + '\n'
+                    turtle += f"            ] ;\n"
+                
+                if 'uri' in condition:
+                    turtle += f'            bdb:uri "{condition["uri"]}" ;\n'
+                
+                turtle = turtle.rstrip(';\n') + '\n'
+                turtle += f"        ] ;\n"
+            
+            # Add public_keys
+            if 'public_keys' in output_obj:
+                public_keys = output_obj['public_keys']
+                if isinstance(public_keys, list):
+                    for key in public_keys:
+                        turtle += f'        bdb:public_keys "{key}" ;\n'
+                else:
+                    turtle += f'        bdb:public_keys "{public_keys}" ;\n'
+            
+            turtle = turtle.rstrip(';\n') + '\n'
+            turtle += f"    ] ;\n"
         
         return turtle
     

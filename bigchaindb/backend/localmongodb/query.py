@@ -319,7 +319,7 @@ def get_buy_offers_by_advertisement(conn, advertisement_id):
     query = {
         "$and": [
             {"operation": "BUY_OFFER"},
-            {"asset.advertisement_id": advertisement_id}
+            {"asset.data.advertisement_id": advertisement_id}
         ]
     }
     cursor = conn.run(conn.collection("transactions").find(query))

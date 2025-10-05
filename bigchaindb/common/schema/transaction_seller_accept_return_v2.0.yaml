@@ -1,5 +1,5 @@
 type: object
-title: Transaction Schema - REQUEST_RETURN specific properties
+title: Transaction Schema - SELLER_ACCEPT_RETURN specific properties
 required:
 - asset
 - metadata
@@ -15,42 +15,44 @@ properties:
         properties:
           id:
             "$ref": "#/definitions/sha3_hexdigest"
-          sell_transaction_id:
+          request_return_id:
             "$ref": "#/definitions/sha3_hexdigest"
         required:
         - id
-        - sell_transaction_id
+        - request_return_id
     required:
     - data
   metadata:
     required:
-    - requester_public_key
-    - return_reason
-    - return_request_timestamp
-    - return_policy_details
+    - seller_public_key
+    - acceptance_timestamp
+    - refund_details
+    - processing_notes
     properties:
-      requester_public_key:
+      seller_public_key:
         "$ref": "#/definitions/base58"
-      return_reason:
-        type: string
-        minLength: 1
-        description: "Reason for requesting return"
-      return_request_timestamp:
+      acceptance_timestamp:
         type: string
         format: "date-time"
-      return_policy_details:
+      refund_details:
         type: object
+        required:
+        - refund_amount
+        - refund_currency
+        - refund_method
         properties:
-          return_window_days:
-            type: integer
+          refund_amount:
+            type: number
             minimum: 0
-          return_conditions:
+          refund_currency:
             type: string
-            description: "Conditions that must be met for return"
-          return_status:
+            minLength: 1
+          refund_method:
             type: string
-            enum: ["PENDING", "APPROVED", "REJECTED", "COMPLETED"]
-            default: "PENDING"
+            description: "Method used for refund (e.g., bank transfer, escrow return)"
+      processing_notes:
+        type: string
+        description: "Notes about the return processing"
   inputs:
     type: array
     minItems: 1

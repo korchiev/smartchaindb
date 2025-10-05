@@ -73,10 +73,11 @@ definitions:
       - ACCEPT
       - RETURN
       - ADVERTISEMENT
+      - UPDATE_ADV
       - BUY_OFFER
       - SELL
       - REQUEST_RETURN
-      - ACCEPT_RETURN
+      - SELLER_ACCEPT_RETURN
   asset:
     type: object
     additionalProperties: false

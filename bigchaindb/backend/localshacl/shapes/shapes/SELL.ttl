@@ -33,12 +33,14 @@ bdb:SellTransactionShape a sh:NodeShape ;
     ] ;
     sh:property [
         sh:path bdb:inputs ;
+        sh:node bdb:SellInputShape ;
         sh:minCount 1 ;
         sh:maxCount 1 ;
         sh:message "SELL transaction must have exactly one input (seller's asset)" ;
     ] ;
     sh:property [
         sh:path bdb:outputs ;
+        sh:node bdb:SellOutputShape ;
         sh:minCount 2 ;
         sh:maxCount 2 ;
         sh:message "SELL transaction must have exactly two outputs (asset to buyer, payment to seller)" ;
@@ -46,14 +48,6 @@ bdb:SellTransactionShape a sh:NodeShape ;
 
 # SELL Asset Shape
 bdb:SellAssetShape a sh:NodeShape ;
-    sh:property [
-        sh:path bdb:id ;
-        sh:datatype xsd:string ;
-        sh:pattern "^[0-9a-f]{64}$" ;
-        sh:minCount 1 ;
-        sh:maxCount 1 ;
-        sh:message "Asset ID must be a 64-character hexadecimal string (SHA3 hash)" ;
-    ] ;
     sh:property [
         sh:path bdb:data ;
         sh:node bdb:SellAssetDataShape ;
@@ -63,6 +57,14 @@ bdb:SellAssetShape a sh:NodeShape ;
 
 # SELL Asset Data Shape
 bdb:SellAssetDataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset ID must be a 64-character hexadecimal string (SHA3 hash)" ;
+    ] ;
     sh:property [
         sh:path bdb:buy_offer_id ;
         sh:datatype xsd:string ;
@@ -116,5 +118,82 @@ bdb:SellMetadataShape a sh:NodeShape ;
         sh:datatype xsd:string ;
         sh:maxLength 1000 ;
         sh:message "sale_notes can be up to 1000 characters" ;
+    ] .
+
+# SELL Input Shape
+bdb:SellInputShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:fulfillment ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[a-zA-Z0-9_-]*$" ;
+        sh:minCount 1 ;
+        sh:message "Input fulfillment is required" ;
+    ] ;
+    sh:property [
+        sh:path bdb:owners_before ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "Input owners_before must be valid base58 public key" ;
+    ] ;
+    sh:property [
+        sh:path bdb:fulfills ;
+        sh:maxCount 1 ;
+        sh:message "Input fulfills can be null or reference previous output" ;
+    ] .
+
+# SELL Output Shape
+bdb:SellOutputShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:amount ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9]{1,20}$" ;
+        sh:minCount 1 ;
+        sh:message "Output amount must be positive integer string" ;
+    ] ;
+    sh:property [
+        sh:path bdb:condition ;
+        sh:node bdb:SellConditionShape ;
+        sh:minCount 1 ;
+        sh:message "Output condition is required" ;
+    ] ;
+    sh:property [
+        sh:path bdb:public_keys ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "Output public_keys must be valid base58 public key" ;
+    ] .
+
+# SELL Condition Shape
+bdb:SellConditionShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:details ;
+        sh:node bdb:SellConditionDetailsShape ;
+        sh:minCount 1 ;
+        sh:message "Condition details are required" ;
+    ] ;
+    sh:property [
+        sh:path bdb:uri ;
+        sh:datatype xsd:string ;
+        sh:pattern "^ni:///sha-256;([a-zA-Z0-9_-]{0,86})[?](fpt=(ed25519|threshold)-sha-256(&)?|cost=[0-9]+(&)?|subtypes=ed25519-sha-256(&)?){2,3}$" ;
+        sh:minCount 1 ;
+        sh:message "Condition URI must be valid cryptographic condition" ;
+    ] .
+
+# SELL Condition Details Shape
+bdb:SellConditionDetailsShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:type ;
+        sh:hasValue "ed25519-sha-256" ;
+        sh:minCount 1 ;
+        sh:message "Condition type must be ed25519-sha-256" ;
+    ] ;
+    sh:property [
+        sh:path bdb:public_key ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "Condition public_key must be valid base58 public key" ;
     ] .
 

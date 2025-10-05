@@ -1,0 +1,117 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix bdb: <http://bigchaindb.com/ns#> .
+
+# SELLER_ACCEPT_RETURN Transaction Shape
+bdb:SellerAcceptReturnTransactionShape a sh:NodeShape ;
+    sh:targetClass bdb:SellerAcceptReturnTransaction ;
+    sh:property [
+        sh:path bdb:operation ;
+        sh:hasValue "SELLER_ACCEPT_RETURN" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Operation must be 'SELLER_ACCEPT_RETURN'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:version ;
+        sh:hasValue "2.0" ;
+        sh:minCount 1 ;
+        sh:message "Version must be '2.0'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:asset ;
+        sh:node bdb:SellerAcceptReturnAssetShape ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset is required for SELLER_ACCEPT_RETURN transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:metadata ;
+        sh:node bdb:SellerAcceptReturnMetadataShape ;
+        sh:minCount 1 ;
+        sh:message "Metadata is required for SELLER_ACCEPT_RETURN transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:inputs ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "SELLER_ACCEPT_RETURN transaction must have exactly one input" ;
+    ] .
+
+# SELLER_ACCEPT_RETURN Asset Shape
+bdb:SellerAcceptReturnAssetShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:data ;
+        sh:node bdb:SellerAcceptReturnAssetDataShape ;
+        sh:minCount 1 ;
+        sh:message "Asset data is required for SELLER_ACCEPT_RETURN" ;
+    ] .
+
+bdb:SellerAcceptReturnAssetDataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset ID must be a 64-character hexadecimal string (SHA3 hash)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:request_return_id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "request_return_id must be a valid SHA3 hash" ;
+    ] .
+
+# SELLER_ACCEPT_RETURN Metadata Shape
+bdb:SellerAcceptReturnMetadataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:seller_public_key ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "seller_public_key must be a valid base58 string (43-44 chars)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:acceptance_timestamp ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:message "acceptance_timestamp must be a valid ISO 8601 datetime" ;
+    ] ;
+    sh:property [
+        sh:path bdb:refund_details ;
+        sh:node bdb:RefundDetailsShape ;
+        sh:minCount 1 ;
+        sh:message "refund_details is required" ;
+    ] ;
+    sh:property [
+        sh:path bdb:processing_notes ;
+        sh:datatype xsd:string ;
+        sh:message "processing_notes can be provided" ;
+    ] .
+
+# Refund Details Shape
+bdb:RefundDetailsShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:refund_amount ;
+        sh:datatype xsd:decimal ;
+        sh:minInclusive 0 ;
+        sh:minCount 1 ;
+        sh:message "refund_amount must be a non-negative decimal" ;
+    ] ;
+    sh:property [
+        sh:path bdb:refund_currency ;
+        sh:datatype xsd:string ;
+        sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "refund_currency is required and must be a non-empty string" ;
+    ] ;
+    sh:property [
+        sh:path bdb:refund_method ;
+        sh:datatype xsd:string ;
+        sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "refund_method is required and must be a non-empty string" ;
+    ] .

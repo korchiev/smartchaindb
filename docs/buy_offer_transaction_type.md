@@ -20,13 +20,15 @@ The `BUY_OFFER` transaction type enables buyers to submit offers for assets list
 ### Asset
 ```json
 {
-  "id": "asset_1234567890abcdef",
-  "advertisement_id": "advertisement_abcdef123456"
+  "data": {
+    "id": "asset_1234567890abcdef",
+    "advertisement_id": "advertisement_abcdef123456"
+  }
 }
 ```
 
-- **`id`**: The asset ID being offered for (SHA3 hexdigest)
-- **`advertisement_id`**: The advertisement ID being responded to (SHA3 hexdigest)
+- **`data.id`**: The asset ID being offered for (SHA3 hexdigest)
+- **`data.advertisement_id`**: The advertisement ID being responded to (SHA3 hexdigest)
 
 ### Metadata
 ```json
@@ -135,7 +137,7 @@ def get_buy_offers_by_advertisement(conn, advertisement_id):
     """Get all buy offers for a specific advertisement"""
     query = {
         'operation': 'BUY_OFFER',
-        'asset.advertisement_id': advertisement_id
+        'asset.data.advertisement_id': advertisement_id
     }
     return conn.transactions.find(query)
 ```
@@ -200,7 +202,7 @@ def get_buy_offers_by_buyer(conn, buyer_public_key):
 ## Performance Considerations
 
 ### Database Indexing
-- Index on `asset.advertisement_id` for fast advertisement lookups
+- Index on `asset.data.advertisement_id` for fast advertisement lookups
 - Index on `metadata.buyer_public_key` for buyer queries
 - Index on `metadata.offer_expiry` for expiration checks
 

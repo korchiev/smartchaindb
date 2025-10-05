@@ -533,10 +533,12 @@ class Transaction(object):
     ACCEPT = "ACCEPT"
     RETURN = "RETURN"
     ADVERTISEMENT = "ADVERTISEMENT"
+    UPDATE_ADV = "UPDATE_ADV"
     BUY_OFFER = "BUY_OFFER"
     SELL = "SELL"
     REQUEST_RETURN = "REQUEST_RETURN"
     ACCEPT_RETURN = "ACCEPT_RETURN"
+    SELLER_ACCEPT_RETURN = "SELLER_ACCEPT_RETURN"
     ALLOWED_OPERATIONS = (
         CREATE,
         TRANSFER,
@@ -547,10 +549,12 @@ class Transaction(object):
         ACCEPT,
         RETURN,
         ADVERTISEMENT,
+        UPDATE_ADV,
         BUY_OFFER,
         SELL,
         REQUEST_RETURN,
         ACCEPT_RETURN,
+        SELLER_ACCEPT_RETURN,
     )
     VERSION = "2.0"
 
@@ -644,14 +648,26 @@ class Transaction(object):
                     "for 'ADVERTISEMENT' Transactions".format(operation)
                 )
             )
-        elif operation == self.BUY_OFFER and not (isinstance(asset, dict) and "id" in asset):
-            raise TypeError("`asset` must be a dict holding an `id` property for 'BUY_OFFER' Transactions")
-        elif operation == self.SELL and not (isinstance(asset, dict) and "id" in asset):
-            raise TypeError("`asset` must be a dict holding an `id` property for 'SELL' Transactions")
-        elif operation == self.REQUEST_RETURN and not (isinstance(asset, dict) and "id" in asset):
-            raise TypeError("`asset` must be a dict holding an `id` property for 'REQUEST_RETURN' Transactions")
+        elif operation == self.BUY_OFFER and not (
+            isinstance(asset, dict)
+            and "data" in asset
+            and isinstance(asset["data"], dict)
+            and "id" in asset["data"]
+        ):
+            raise TypeError("`asset` must be a dict holding a `data.id` property for 'BUY_OFFER' Transactions")
+        elif operation == self.SELL and not (
+            isinstance(asset, dict)
+            and "data" in asset
+            and isinstance(asset["data"], dict)
+            and "id" in asset["data"]
+        ):
+            raise TypeError("`asset` must be a dict holding a `data.id` property for 'SELL' Transactions")
+        elif operation == self.REQUEST_RETURN and not (isinstance(asset, dict) and "data" in asset and isinstance(asset["data"], dict) and "id" in asset["data"]):
+            raise TypeError("`asset` must be a dict holding a `data.id` property for 'REQUEST_RETURN' Transactions")
         elif operation == self.ACCEPT_RETURN and not (isinstance(asset, dict) and "id" in asset):
             raise TypeError("`asset` must be a dict holding an `id` property for 'ACCEPT_RETURN' Transactions")
+        elif operation == self.SELLER_ACCEPT_RETURN and not (isinstance(asset, dict) and "data" in asset and isinstance(asset["data"], dict) and "id" in asset["data"]):
+            raise TypeError("`asset` must be a dict holding a `data.id` property for 'SELLER_ACCEPT_RETURN' Transactions")
 
         if outputs and not isinstance(outputs, list):
             raise TypeError("`outputs` must be a list instance or None")
@@ -686,13 +702,21 @@ class Transaction(object):
         elif self.operation == self.ADVERTISEMENT:
             self._asset_id = self.asset["id"]
         elif self.operation == self.BUY_OFFER:
-            self._asset_id = self.asset["id"]
+            self._asset_id = self.asset["data"]["id"]
         elif self.operation == self.SELL:
-            self._asset_id = self.asset["id"]
+            self._asset_id = self.asset["data"]["id"]
         elif self.operation == self.REQUEST_RETURN:
-            self._asset_id = self.asset["id"]
+            self._asset_id = self.asset["data"]["id"]
         elif self.operation == self.ACCEPT_RETURN:
             self._asset_id = self.asset["id"]
+        elif self.operation == self.SELLER_ACCEPT_RETURN:
+            self._asset_id = self.asset["data"]["id"]
+        elif self.operation == 'UPDATE_ADV':
+            # No UTXO movement; still capture the referenced advertisement id if needed elsewhere
+            try:
+                self._asset_id = self.asset["data"]["id"]
+            except Exception:
+                self._asset_id = None
         # FIXME: Add PRE_REQUEST, INTEREST, and BID-ACCEPT
         return (
             UnspentOutput(
@@ -1019,7 +1043,13 @@ class Transaction(object):
             metadata = {}
             
         (inputs, outputs) = cls.validate_buy_offer(inputs, asset_id, advertisement_id, metadata)
-        return cls(cls.BUY_OFFER, {"id": asset_id, "advertisement_id": advertisement_id}, inputs, outputs, metadata)
+        return cls(
+            cls.BUY_OFFER,
+            {"data": {"id": asset_id, "advertisement_id": advertisement_id}},
+            inputs,
+            outputs,
+            metadata,
+        )
 
     @classmethod
     def validate_sell(cls, inputs, asset_id, buy_offer_id, metadata):
@@ -1095,7 +1125,32 @@ class Transaction(object):
             metadata = {}
             
         (inputs, outputs) = cls.validate_sell(inputs, asset_id, buy_offer_id, metadata)
-        return cls(cls.SELL, {"id": asset_id, "buy_offer_id": buy_offer_id}, inputs, outputs, metadata)
+        return cls(
+            cls.SELL,
+            {"data": {"id": asset_id, "buy_offer_id": buy_offer_id}},
+            inputs,
+            outputs,
+            metadata,
+        )
+
+    @classmethod
+    def validate_update_adv(cls, inputs, advertisement_id, metadata):
+        if not isinstance(inputs, list) or len(inputs) < 1:
+            raise ValueError("`inputs` must contain at least one item")
+        if not isinstance(advertisement_id, str):
+            raise TypeError("`advertisement_id` must be a string")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise TypeError("`metadata` must be a dict or None")
+        if metadata and 'status' in metadata and metadata['status'] not in ['OPEN', 'LOCKED', 'CLOSED']:
+            raise ValueError("`status` must be one of OPEN, LOCKED, CLOSED")
+        return (inputs, [])
+
+    @classmethod
+    def update_adv(cls, inputs, advertisement_id, metadata=None):
+        if metadata is None:
+            metadata = {}
+        (inputs, outputs) = cls.validate_update_adv(inputs, advertisement_id, metadata)
+        return cls('UPDATE_ADV', {"data": {"id": advertisement_id}}, inputs, outputs, metadata)
 
     @classmethod
     def validate_request_return(cls, inputs, asset_id, sell_transaction_id, metadata):
@@ -1525,6 +1580,7 @@ class Transaction(object):
             self.SELL,
             self.REQUEST_RETURN,
             self.ACCEPT_RETURN,
+            self.SELLER_ACCEPT_RETURN,
         ]:
             return self._inputs_valid(
                 [output.fulfillment.condition_uri for output in outputs]

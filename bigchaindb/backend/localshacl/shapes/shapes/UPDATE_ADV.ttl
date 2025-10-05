@@ -1,0 +1,90 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix bdb: <http://bigchaindb.com/ns#> .
+
+# UPDATE_ADV Transaction Shape
+bdb:UpdateAdvTransactionShape a sh:NodeShape ;
+    sh:targetClass bdb:UpdateAdvTransaction ;
+    sh:property [
+        sh:path bdb:operation ;
+        sh:hasValue "UPDATE_ADV" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Operation must be 'UPDATE_ADV'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:version ;
+        sh:hasValue "2.0" ;
+        sh:minCount 1 ;
+        sh:message "Version must be '2.0'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:asset ;
+        sh:node bdb:UpdateAdvAssetShape ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset is required for UPDATE_ADV transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:metadata ;
+        sh:node bdb:UpdateAdvMetadataShape ;
+        sh:minCount 1 ;
+        sh:message "Metadata is required for UPDATE_ADV transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:inputs ;
+        sh:minCount 1 ;
+        sh:message "UPDATE_ADV transaction must have at least one input (updater's signature)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:outputs ;
+        sh:maxCount 1 ;
+        sh:message "UPDATE_ADV transaction must have at most one output" ;
+    ] .
+
+# UPDATE_ADV Asset Shape
+bdb:UpdateAdvAssetShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:data ;
+        sh:node bdb:UpdateAdvAssetDataShape ;
+        sh:minCount 1 ;
+        sh:message "Asset data is required for UPDATE_ADV" ;
+    ] .
+
+# UPDATE_ADV Asset Data Shape
+bdb:UpdateAdvAssetDataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Advertisement ID must be a 64-character hexadecimal string (SHA3 hash)" ;
+    ] .
+
+# UPDATE_ADV Metadata Shape
+bdb:UpdateAdvMetadataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:updater_public_key ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "updater_public_key must be a valid base58 string (43-44 chars)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:status ;
+        sh:in ( "OPEN" "LOCKED" "CLOSED" ) ;
+        sh:minCount 1 ;
+        sh:message "status must be 'OPEN', 'LOCKED', or 'CLOSED'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:price ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9]{1,20}(\\.[0-9]{1,2})?$" ;
+        sh:message "price must be a positive numeric string with up to 2 decimal places" ;
+    ] ;
+    sh:property [
+        sh:path bdb:expiry_date ;
+        sh:datatype xsd:dateTime ;
+        sh:message "expiry_date must be a valid ISO 8601 datetime" ;
+    ] .
