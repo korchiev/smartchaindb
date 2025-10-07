@@ -6,14 +6,22 @@ required:
 - inputs
 properties:
   asset:
+    type: object
+    additionalProperties: false
     properties:
-      id:
-        "$ref": "#/definitions/sha3_hexdigest"
-      sell_transaction_id:
-        "$ref": "#/definitions/sha3_hexdigest"
+      data:
+        type: object
+        additionalProperties: true
+        properties:
+          id:
+            "$ref": "#/definitions/sha3_hexdigest"
+          sell_transaction_id:
+            "$ref": "#/definitions/sha3_hexdigest"
+        required:
+        - id
+        - sell_transaction_id
     required:
-    - id
-    - sell_transaction_id
+    - data
   metadata:
     required:
     - requester_public_key
@@ -49,6 +57,11 @@ properties:
     maxItems: 1
     items:
       "$ref": "#/definitions/input"
+  outputs:
+    type: array
+    minItems: 1
+    items:
+      "$ref": "#/definitions/output"
 definitions:
   sha3_hexdigest:
     pattern: "[0-9a-f]{64}"
@@ -58,16 +71,63 @@ definitions:
     type: string
   input:
     type: object
+    additionalProperties: false
     required:
-    - fulfills
+      - owners_before
+      - fulfillment
     properties:
-      fulfills:
+      fulfillment:
+        type: string
+      fulfillment_details:
         type: object
+        additionalProperties: true
+      owners_before:
+        type: array
+        items:
+          "$ref": "#/definitions/base58"
+      fulfills:
+        anyOf:
+          - type: "null"
+          - type: object
+            additionalProperties: false
+            required:
+              - transaction_id
+              - output_index
+            properties:
+              transaction_id:
+                "$ref": "#/definitions/sha3_hexdigest"
+              output_index:
+                type: integer
+                minimum: 0
+  output:
+    type: object
+    additionalProperties: false
+    required:
+      - amount
+      - condition
+      - public_keys
+    properties:
+      amount:
+        type: string
+        pattern: "^[0-9]{1,20}$"
+      condition:
+        type: object
+        additionalProperties: false
         required:
-        - txid
-        - output
+          - details
+          - uri
         properties:
-          txid:
+          details:
+            type: object
+            additionalProperties: true
+          uri:
             type: string
-          output:
-            type: integer
+            pattern: "^ni:///sha-256;([a-zA-Z0-9_-]{0,86})[?]\
+              (fpt=(ed25519|threshold)-sha-256(&)?|cost=[0-9]+(&)?|\
+              subtypes=ed25519-sha-256(&)?){2,3}$"
+      public_keys:
+        anyOf:
+          - type: array
+            items:
+              "$ref": "#/definitions/base58"
+          - type: "null"

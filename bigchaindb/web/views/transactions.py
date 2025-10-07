@@ -22,6 +22,72 @@ from bigchaindb.web.views.base import make_error, validate_schema_definition
 from bigchaindb.web.views import parameters
 from bigchaindb.models import Transaction
 from bigchaindb.utils import log_metric
+from bigchaindb.enhanced_metrics import (
+    start_experiment_session,
+    end_experiment_session,
+    mark_lifecycle_event,
+    is_session_active,
+    get_current_session,
+    save_current_results
+)
+import os
+import time
+
+
+logger = logging.getLogger(__name__)
+recovery_logger = logging.getLogger("recovery")
+
+
+def _ensure_experiment_session():
+    """Ensure an experiment session is started for automatic metrics tracking"""
+    if not is_session_active():
+        # Auto-start session with current validation type only
+        experiment_name = os.environ.get('BIGCHAINDB_EXPERIMENT_NAME', 'Auto_Experiment')
+        
+        # Determine current validation type
+        shacl_enabled = os.environ.get('BIGCHAINDB_SHACL_ENABLED', 'false').lower() in ('true', '1', 'yes', 'on')
+        current_validation_type = 'SHACL' if shacl_enabled else 'TRADITIONAL'
+        
+        # Only track the current validation type
+        validation_types = [current_validation_type]
+        operations_tested = ['CREATE', 'TRANSFER', 'BUY_OFFER', 'SELL', 'REQUEST_RETURN', 'ACCEPT_RETURN']
+        
+        configuration = {
+            'auto_started': True,
+            'shacl_enabled': shacl_enabled,
+            'metrics_enabled': os.environ.get('BIGCHAINDB_ENHANCED_METRICS_ENABLED', 'true').lower() in ('true', '1', 'yes', 'on'),
+            'validation_type': current_validation_type,
+            'single_experiment': True
+        }
+        
+        notes = f"Automatically started {current_validation_type} validation experiment session for external driver requests"
+        
+        session_id = start_experiment_session(
+            experiment_name=experiment_name,
+            validation_types=validation_types,
+            operations_tested=operations_tested,
+            configuration=configuration,
+            notes=notes
+        )
+        
+        logger.info(f"Auto-started {current_validation_type} experiment session: {session_id}")
+
+
+def _auto_save_results_if_needed():
+    """Auto-save results periodically or when certain conditions are met"""
+    if not is_session_active():
+        return
+    
+    session = get_current_session()
+    if not session:
+        return
+    
+    # Save checkpoint every 100 transactions
+    checkpoint_interval = int(os.environ.get('BIGCHAINDB_METRICS_CHECKPOINT_INTERVAL', '100'))
+    if session.total_transactions > 0 and session.total_transactions % checkpoint_interval == 0:
+        checkpoint_name = f"auto_checkpoint_{session.total_transactions}"
+        save_current_results(checkpoint_name)
+        logger.info(f"Auto-saved checkpoint: {checkpoint_name}")
 
 
 logger = logging.getLogger(__name__)
@@ -91,11 +157,14 @@ class TransactionListApi(Resource):
         return [tx.to_dict() for tx in txs]
 
     def post(self):
-        """API endpoint to push transactions to the Federation.
+        """API endpoint to push transactions to the Federation with automatic metrics tracking.
 
         Return:
             A ``dict`` containing the data about the transaction.
         """
+        # Auto-start experiment session if not already started
+        _ensure_experiment_session()
+        
         parser = reqparse.RequestParser()
         parser.add_argument(
             "mode", type=parameters.valid_mode, default=BROADCAST_TX_ASYNC
@@ -136,7 +205,24 @@ class TransactionListApi(Resource):
                     tx_obj._id,
                     None
                 )
+                
+                # Track lifecycle events for metrics
+                if is_session_active():
+                    mark_lifecycle_event(tx_obj.id, 'check_tx')
+                
                 status_code, message = bigchain.write_transaction(tx_obj, mode)
+                
+                # Track additional lifecycle events
+                if is_session_active():
+                    if status_code == 202:
+                        mark_lifecycle_event(tx_obj.id, 'deliver_tx')
+                        mark_lifecycle_event(tx_obj.id, 'end_block')
+                        mark_lifecycle_event(tx_obj.id, 'commit')
+                    else:
+                        mark_lifecycle_event(tx_obj.id, 'transaction_failed')
+                    
+                    # Auto-save results if needed
+                    _auto_save_results_if_needed()
 
         if status_code == 202:
             response = jsonify(tx)

@@ -60,6 +60,8 @@ _, TX_SCHEMA_BUY_OFFER = _load_schema("transaction_buyoffer_" + TX_SCHEMA_VERSIO
 _, TX_SCHEMA_SELL = _load_schema("transaction_sell_" + TX_SCHEMA_VERSION)
 _, TX_SCHEMA_REQUEST_RETURN = _load_schema("transaction_request_return_" + TX_SCHEMA_VERSION)
 _, TX_SCHEMA_ACCEPT_RETURN = _load_schema("transaction_accept_return_" + TX_SCHEMA_VERSION)
+_, TX_SCHEMA_UPDATE_ADV = _load_schema("transaction_update_adv_" + TX_SCHEMA_VERSION)
+_, TX_SCHEMA_SELLER_ACCEPT_RETURN = _load_schema("transaction_seller_accept_return_" + TX_SCHEMA_VERSION)
 
 
 def _validate_schema(schema, body):
@@ -121,5 +123,9 @@ def validate_transaction_schema(tx):
         _validate_schema(TX_SCHEMA_REQUEST_RETURN, tx)
     elif tx["operation"] == "ACCEPT_RETURN":
         _validate_schema(TX_SCHEMA_ACCEPT_RETURN, tx)
+    elif tx["operation"] == "UPDATE_ADV":
+        _validate_schema(TX_SCHEMA_UPDATE_ADV, tx)
+    elif tx["operation"] == "SELLER_ACCEPT_RETURN":
+        _validate_schema(TX_SCHEMA_SELLER_ACCEPT_RETURN, tx)
     else:
         _validate_schema(TX_SCHEMA_CREATE, tx)

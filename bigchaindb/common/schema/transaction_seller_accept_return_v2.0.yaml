@@ -1,5 +1,5 @@
 type: object
-title: Transaction Schema - BUY_OFFER specific properties
+title: Transaction Schema - SELLER_ACCEPT_RETURN specific properties
 required:
 - asset
 - metadata
@@ -16,43 +16,61 @@ properties:
         properties:
           id:
             "$ref": "#/definitions/sha3_hexdigest"
-          advertisement_id:
+          request_return_id:
             "$ref": "#/definitions/sha3_hexdigest"
         required:
         - id
-        - advertisement_id
+        - request_return_id
     required:
     - data
   metadata:
     required:
-    - buyer_public_key
-    - offer_amount
-    - offer_expiry
-    - escrow_public_key
+    - seller_public_key
+    - refund_details
+    - acceptance_timestamp
     properties:
-      buyer_public_key:
+      seller_public_key:
         "$ref": "#/definitions/base58"
-      offer_amount:
-        type: string
-        pattern: "^[0-9]{1,20}$"
-      offer_currency:
-        type: string
-        minLength: 1
-      offer_timestamp:
+      refund_details:
+        type: object
+        required:
+        - refund_amount
+        - refund_currency
+        - refund_method
+        properties:
+          refund_amount:
+            type: string
+            pattern: "^[0-9]{1,20}$"
+          refund_currency:
+            type: string
+            minLength: 1
+          refund_method:
+            type: string
+            enum: ["BANK_TRANSFER", "CRYPTO", "CREDIT_CARD", "PAYPAL"]
+          refund_timeline:
+            type: string
+            maxLength: 200
+        additionalProperties: true
+      acceptance_timestamp:
         type: string
         format: date-time
-      offer_expiry:
-        type: string
-        format: date-time
-      escrow_public_key:
-        "$ref": "#/definitions/base58"
-      payment_asset_id:
-        "$ref": "#/definitions/sha3_hexdigest"
       requestCreationTimestamp:
         type: string
-      offer_notes:
-        type: string
-        maxLength: 1000
+        format: date-time
+      return_policy_details:
+        type: object
+        properties:
+          return_window_days:
+            type: integer
+            minimum: 1
+            maximum: 365
+          return_status:
+            type: string
+            enum: ["PENDING", "ACCEPTED", "REJECTED", "COMPLETED"]
+          return_conditions:
+            type: string
+            maxLength: 1000
+        additionalProperties: true
     additionalProperties: true
   inputs:
     type: array

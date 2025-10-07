@@ -43,9 +43,61 @@ BANNER = """
 """
 
 
+def _initialize_enhanced_metrics():
+    """Initialize enhanced metrics system if enabled"""
+    import os
+    
+    metrics_enabled = os.environ.get('BIGCHAINDB_ENHANCED_METRICS_ENABLED', 'true').lower() in ('true', '1', 'yes', 'on')
+    
+    if metrics_enabled:
+        try:
+            from bigchaindb.enhanced_metrics import start_experiment_session
+            
+            # Auto-start experiment session on server startup with current validation type only
+            experiment_name = os.environ.get('BIGCHAINDB_EXPERIMENT_NAME', 'Server_Startup_Experiment')
+            
+            # Determine current validation type
+            shacl_enabled = os.environ.get('BIGCHAINDB_SHACL_ENABLED', 'false').lower() in ('true', '1', 'yes', 'on')
+            current_validation_type = 'SHACL' if shacl_enabled else 'TRADITIONAL'
+            
+            # Only track the current validation type
+            validation_types = [current_validation_type]
+            operations_tested = ['CREATE', 'TRANSFER', 'BUY_OFFER', 'SELL', 'REQUEST_RETURN', 'ACCEPT_RETURN']
+            
+            configuration = {
+                'auto_started': True,
+                'server_startup': True,
+                'shacl_enabled': shacl_enabled,
+                'metrics_enabled': True,
+                'validation_type': current_validation_type,
+                'single_experiment': True
+            }
+            
+            notes = f"Automatically started {current_validation_type} validation experiment session on BigchainDB server startup"
+            
+            session_id = start_experiment_session(
+                experiment_name=experiment_name,
+                validation_types=validation_types,
+                operations_tested=operations_tested,
+                configuration=configuration,
+                notes=notes
+            )
+            
+            logger.info(f"Enhanced metrics initialized with {current_validation_type} session: {session_id}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to initialize enhanced metrics: {e}")
+    else:
+        logger.info("Enhanced metrics disabled")
+
+
 def start(args):
     # Exchange object for event stream api
     logger.info("Starting BigchainDB")
+    
+    # Initialize enhanced metrics if enabled
+    _initialize_enhanced_metrics()
+    
     exchange = Exchange()
     # start the web api
     app_server = server.create_server(

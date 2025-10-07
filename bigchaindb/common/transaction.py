@@ -537,6 +537,8 @@ class Transaction(object):
     SELL = "SELL"
     REQUEST_RETURN = "REQUEST_RETURN"
     ACCEPT_RETURN = "ACCEPT_RETURN"
+    UPDATE_ADV = "UPDATE_ADV"
+    SELLER_ACCEPT_RETURN = "SELLER_ACCEPT_RETURN"
     ALLOWED_OPERATIONS = (
         CREATE,
         TRANSFER,
@@ -551,6 +553,8 @@ class Transaction(object):
         SELL,
         REQUEST_RETURN,
         ACCEPT_RETURN,
+        UPDATE_ADV,
+        SELLER_ACCEPT_RETURN,
     )
     VERSION = "2.0"
 
@@ -644,14 +648,18 @@ class Transaction(object):
                     "for 'ADVERTISEMENT' Transactions".format(operation)
                 )
             )
-        elif operation == self.BUY_OFFER and not (isinstance(asset, dict) and "id" in asset):
-            raise TypeError("`asset` must be a dict holding an `id` property for 'BUY_OFFER' Transactions")
-        elif operation == self.SELL and not (isinstance(asset, dict) and "id" in asset):
-            raise TypeError("`asset` must be a dict holding an `id` property for 'SELL' Transactions")
-        elif operation == self.REQUEST_RETURN and not (isinstance(asset, dict) and "id" in asset):
-            raise TypeError("`asset` must be a dict holding an `id` property for 'REQUEST_RETURN' Transactions")
-        elif operation == self.ACCEPT_RETURN and not (isinstance(asset, dict) and "id" in asset):
-            raise TypeError("`asset` must be a dict holding an `id` property for 'ACCEPT_RETURN' Transactions")
+        elif operation == self.BUY_OFFER and not (isinstance(asset, dict) and "data" in asset and isinstance(asset["data"], dict) and "id" in asset["data"]):
+            raise TypeError("`asset` must be a dict holding a `data` property with an `id` for 'BUY_OFFER' Transactions")
+        elif operation == self.SELL and not (isinstance(asset, dict) and "data" in asset and isinstance(asset["data"], dict) and "id" in asset["data"]):
+            raise TypeError("`asset` must be a dict holding a `data` property with an `id` for 'SELL' Transactions")
+        elif operation == self.REQUEST_RETURN and not (isinstance(asset, dict) and "data" in asset and isinstance(asset["data"], dict) and "id" in asset["data"]):
+            raise TypeError("`asset` must be a dict holding a `data` property with an `id` for 'REQUEST_RETURN' Transactions")
+        elif operation == self.ACCEPT_RETURN and not (isinstance(asset, dict) and "data" in asset and isinstance(asset["data"], dict) and "id" in asset["data"]):
+            raise TypeError("`asset` must be a dict holding a `data` property with an `id` for 'ACCEPT_RETURN' Transactions")
+        elif operation == self.UPDATE_ADV and not (isinstance(asset, dict) and "data" in asset and isinstance(asset["data"], dict) and "id" in asset["data"]):
+            raise TypeError("`asset` must be a dict holding a `data` property with an `id` for 'UPDATE_ADV' Transactions")
+        elif operation == self.SELLER_ACCEPT_RETURN and not (isinstance(asset, dict) and "data" in asset and isinstance(asset["data"], dict) and "id" in asset["data"]):
+            raise TypeError("`asset` must be a dict holding a `data` property with an `id` for 'SELLER_ACCEPT_RETURN' Transactions")
 
         if outputs and not isinstance(outputs, list):
             raise TypeError("`outputs` must be a list instance or None")
@@ -686,13 +694,17 @@ class Transaction(object):
         elif self.operation == self.ADVERTISEMENT:
             self._asset_id = self.asset["id"]
         elif self.operation == self.BUY_OFFER:
-            self._asset_id = self.asset["id"]
+            self._asset_id = self.asset["data"]["id"]
         elif self.operation == self.SELL:
-            self._asset_id = self.asset["id"]
+            self._asset_id = self.asset["data"]["id"]
         elif self.operation == self.REQUEST_RETURN:
-            self._asset_id = self.asset["id"]
+            self._asset_id = self.asset["data"]["id"]
         elif self.operation == self.ACCEPT_RETURN:
-            self._asset_id = self.asset["id"]
+            self._asset_id = self.asset["data"]["id"]
+        elif self.operation == self.UPDATE_ADV:
+            self._asset_id = self.asset["data"]["id"]
+        elif self.operation == self.SELLER_ACCEPT_RETURN:
+            self._asset_id = self.asset["data"]["id"]
         # FIXME: Add PRE_REQUEST, INTEREST, and BID-ACCEPT
         return (
             UnspentOutput(
@@ -1019,7 +1031,7 @@ class Transaction(object):
             metadata = {}
             
         (inputs, outputs) = cls.validate_buy_offer(inputs, asset_id, advertisement_id, metadata)
-        return cls(cls.BUY_OFFER, {"id": asset_id, "advertisement_id": advertisement_id}, inputs, outputs, metadata)
+        return cls(cls.BUY_OFFER, {"data": {"id": asset_id, "advertisement_id": advertisement_id}}, inputs, outputs, metadata)
 
     @classmethod
     def validate_sell(cls, inputs, asset_id, buy_offer_id, metadata):
@@ -1095,7 +1107,7 @@ class Transaction(object):
             metadata = {}
             
         (inputs, outputs) = cls.validate_sell(inputs, asset_id, buy_offer_id, metadata)
-        return cls(cls.SELL, {"id": asset_id, "buy_offer_id": buy_offer_id}, inputs, outputs, metadata)
+        return cls(cls.SELL, {"id": asset_id, "data": {"buy_offer_id": buy_offer_id}}, inputs, outputs, metadata)
 
     @classmethod
     def validate_request_return(cls, inputs, asset_id, sell_transaction_id, metadata):
@@ -1168,7 +1180,7 @@ class Transaction(object):
             metadata['return_policy_details']['return_status'] = 'PENDING'
             
         (inputs, outputs) = cls.validate_request_return(inputs, asset_id, sell_transaction_id, metadata)
-        return cls(cls.REQUEST_RETURN, {"id": asset_id, "sell_transaction_id": sell_transaction_id}, inputs, outputs, metadata)
+        return cls(cls.REQUEST_RETURN, {"data": {"id": asset_id, "sell_transaction_id": sell_transaction_id}}, inputs, outputs, metadata)
 
     @classmethod
     def validate_accept_return(cls, inputs, asset_id, request_return_id, metadata):
@@ -1240,7 +1252,146 @@ class Transaction(object):
             metadata = {}
             
         (inputs, outputs) = cls.validate_accept_return(inputs, asset_id, request_return_id, metadata)
-        return cls(cls.ACCEPT_RETURN, {"id": asset_id, "request_return_id": request_return_id}, inputs, outputs, metadata)
+        return cls(cls.ACCEPT_RETURN, {"data": {"id": asset_id, "request_return_id": request_return_id}}, inputs, outputs, metadata)
+
+    @classmethod
+    def validate_update_adv(cls, inputs, asset_id, advertisement_id, metadata):
+        """Validate update advertisement transaction inputs and metadata.
+        
+        Args:
+            inputs: List of inputs (must be exactly one)
+            asset_id: The asset ID being updated
+            advertisement_id: The advertisement ID being updated
+            metadata: Metadata containing update details
+            
+        Returns:
+            tuple: (inputs, outputs) where outputs is empty for update
+        """
+        if not isinstance(inputs, list):
+            raise TypeError("`inputs` must be a list instance")
+        if len(inputs) != 1:
+            raise ValueError("`inputs` must contain exactly one item for update advertisement")
+        
+        if not isinstance(asset_id, str):
+            raise TypeError("`asset_id` must be a string")
+            
+        if not isinstance(advertisement_id, str):
+            raise TypeError("`advertisement_id` must be a string")
+            
+        if not isinstance(metadata, dict):
+            raise TypeError("`metadata` must be a dict")
+            
+        # Validate required metadata fields
+        required_fields = ['advertiser_public_key', 'new_status', 'new_value', 'new_expiry_date']
+        for field in required_fields:
+            if field not in metadata:
+                raise ValueError(f"`metadata` must contain '{field}' field")
+                
+        # Validate new status
+        valid_statuses = ['OPEN', 'LOCKED', 'CLOSED']
+        if metadata['new_status'] not in valid_statuses:
+            raise ValueError(f"`new_status` must be one of: {valid_statuses}")
+            
+        # Validate new value
+        if not isinstance(metadata['new_value'], str) or not metadata['new_value'].isdigit():
+            raise ValueError("`new_value` must be a string containing only digits")
+            
+        # Validate new expiry date
+        if not isinstance(metadata['new_expiry_date'], str):
+            raise ValueError("`new_expiry_date` must be a string")
+                
+        return (deepcopy(inputs), [])
+
+    @classmethod
+    def update_adv(cls, inputs, asset_id, advertisement_id, metadata=None):
+        """A simple way to generate a `UPDATE_ADV` transaction.
+        
+        Args:
+            inputs: List of inputs (must be exactly one)
+            asset_id: The asset ID being updated
+            advertisement_id: The advertisement ID being updated
+            metadata: Metadata containing update details
+            
+        Returns:
+            :class:`~bigchaindb/common.transaction.Transaction`
+        """
+        if metadata is None:
+            metadata = {}
+            
+        (inputs, outputs) = cls.validate_update_adv(inputs, asset_id, advertisement_id, metadata)
+        return cls(cls.UPDATE_ADV, {"data": {"id": asset_id, "advertisement_id": advertisement_id}}, inputs, outputs, metadata)
+
+    @classmethod
+    def validate_seller_accept_return(cls, inputs, asset_id, request_return_id, metadata):
+        """Validate seller accept return transaction inputs and metadata.
+        
+        Args:
+            inputs: List of inputs (must be exactly one)
+            asset_id: The asset ID being returned
+            request_return_id: The request return transaction ID being accepted
+            metadata: Metadata containing seller acceptance details
+            
+        Returns:
+            tuple: (inputs, outputs) where outputs is empty for seller accept return
+        """
+        if not isinstance(inputs, list):
+            raise TypeError("`inputs` must be a list instance")
+        if len(inputs) != 1:
+            raise ValueError("`inputs` must contain exactly one item for seller accept return")
+        
+        if not isinstance(asset_id, str):
+            raise TypeError("`asset_id` must be a string")
+            
+        if not isinstance(request_return_id, str):
+            raise TypeError("`request_return_id` must be a string")
+            
+        if not isinstance(metadata, dict):
+            raise TypeError("`metadata` must be a dict")
+            
+        # Validate required metadata fields
+        required_fields = ['seller_public_key', 'refund_details', 'acceptance_timestamp']
+        for field in required_fields:
+            if field not in metadata:
+                raise ValueError(f"`metadata` must contain '{field}' field")
+                
+        # Validate refund details
+        if not isinstance(metadata['refund_details'], dict):
+            raise ValueError("`refund_details` must be a dict")
+            
+        refund_required_fields = ['refund_amount', 'refund_currency', 'refund_method']
+        for field in refund_required_fields:
+            if field not in metadata['refund_details']:
+                raise ValueError(f"`refund_details` must contain '{field}' field")
+                
+        # Validate refund method
+        valid_methods = ['BANK_TRANSFER', 'CRYPTO', 'CREDIT_CARD', 'PAYPAL']
+        if metadata['refund_details']['refund_method'] not in valid_methods:
+            raise ValueError(f"`refund_method` must be one of: {valid_methods}")
+            
+        # Validate acceptance timestamp
+        if not isinstance(metadata['acceptance_timestamp'], str):
+            raise ValueError("`acceptance_timestamp` must be a string")
+                
+        return (deepcopy(inputs), [])
+
+    @classmethod
+    def seller_accept_return(cls, inputs, asset_id, request_return_id, metadata=None):
+        """A simple way to generate a `SELLER_ACCEPT_RETURN` transaction.
+        
+        Args:
+            inputs: List of inputs (must be exactly one)
+            asset_id: The asset ID being returned
+            request_return_id: The request return transaction ID being accepted
+            metadata: Metadata containing seller acceptance details
+            
+        Returns:
+            :class:`~bigchaindb/common.transaction.Transaction`
+        """
+        if metadata is None:
+            metadata = {}
+            
+        (inputs, outputs) = cls.validate_seller_accept_return(inputs, asset_id, request_return_id, metadata)
+        return cls(cls.SELLER_ACCEPT_RETURN, {"data": {"id": asset_id, "request_return_id": request_return_id}}, inputs, outputs, metadata)
 
     def __eq__(self, other):
         try:
@@ -1742,7 +1893,7 @@ class Transaction(object):
             if tx.operation in [tx.CREATE, tx.BID]:
                 asset_id = tx.id
             else:
-                asset_id = tx.asset["id"]
+                asset_id = tx.asset.get("data", {}).get("id") or tx.asset["id"]
             asset_ids.add(asset_id)
 
         # check that all the transasctions have the same asset id
@@ -2077,7 +2228,7 @@ class Transaction(object):
             # No need to validate again here
         
         # Validate asset ID is provided (the asset being purchased, not the payment)
-        tx_asset_id = self.asset.get("id")
+        tx_asset_id = self.asset.get("data", {}).get("id")
         if not tx_asset_id:
             raise ValueError("Buy offer must reference an asset ID")
 
@@ -2205,7 +2356,7 @@ class Transaction(object):
 
         # Validate asset ID consistency
         asset_id = self.get_asset_id(input_txs)
-        tx_asset_id = self.asset["id"]
+        tx_asset_id = self.asset["data"]["id"]
 
         if asset_id != tx_asset_id:
             raise AssetIdMismatch(
@@ -2224,8 +2375,16 @@ class Transaction(object):
         if buy_offer_tx.operation != 'BUY_OFFER':
             raise ValueError(f"Referenced transaction {buy_offer_id} is not a buy offer")
             
-        if buy_offer_tx.asset.get('id') != asset_id:
-            raise ValueError(f"Buy offer targets different asset than sell transaction")
+        # Validate that the buy offer targets the same asset OR carries escrow info
+        buy_offer_asset_id = buy_offer_tx.asset.get('data', {}).get('id') or buy_offer_tx.asset.get('id')
+        if buy_offer_asset_id != asset_id:
+            # Allow legacy/current driver behavior where BUY_OFFER.asset.data.id holds buyer's payment asset
+            # In that case, require presence of payment_asset_id in metadata to indicate escrowed funds
+            payment_asset_id = None
+            if hasattr(buy_offer_tx, 'metadata') and isinstance(buy_offer_tx.metadata, dict):
+                payment_asset_id = buy_offer_tx.metadata.get('payment_asset_id')
+            if not payment_asset_id:
+                raise ValueError("Buy offer targets different asset than sell transaction")
 
         # Get the advertisement from the buy offer (check both top-level and data)
         advertisement_id = buy_offer_tx.asset.get('advertisement_id') or buy_offer_tx.asset.get('data', {}).get('advertisement_id')
@@ -2328,7 +2487,7 @@ class Transaction(object):
 
         # Validate asset ID consistency
         asset_id = self.get_asset_id(input_txs)
-        tx_asset_id = self.asset["id"]
+        tx_asset_id = self.asset["data"]["id"]
 
         if asset_id != tx_asset_id:
             raise AssetIdMismatch(
@@ -2336,7 +2495,7 @@ class Transaction(object):
             )
 
         # Validate request return exists and is OPEN
-        request_return_id = self.asset.get('request_return_id')
+        request_return_id = self.asset.get('data', {}).get('request_return_id')
         if not request_return_id:
             raise ValueError("Accept return must reference a request return transaction")
             
@@ -2353,7 +2512,7 @@ class Transaction(object):
             raise ValueError(f"Request return {request_return_id} is not OPEN (status: {return_status})")
 
         # Validate request return binds the same Sell Tx
-        sell_transaction_id = request_return_tx.asset.get('sell_transaction_id')
+        sell_transaction_id = request_return_tx.asset.get('sell_transaction_id') or request_return_tx.asset.get('data', {}).get('sell_transaction_id')
         if not sell_transaction_id:
             raise ValueError("Request return must reference a sell transaction")
             
@@ -2368,14 +2527,14 @@ class Transaction(object):
         accepter_pub_key = self.metadata.get('accepter_public_key')
         
         # Get the buy offer from the sell transaction
-        buy_offer_id = sell_tx.asset.get('buy_offer_id')
+        buy_offer_id = sell_tx.asset.get('buy_offer_id') or sell_tx.asset.get('data', {}).get('buy_offer_id')
         buy_offer_tx = bigchain.get_transaction(buy_offer_id)
         
         if not buy_offer_tx:
             raise ValueError(f"Referenced buy offer {buy_offer_id} does not exist")
             
         # Get the advertisement from the buy offer
-        advertisement_id = buy_offer_tx.asset.get('advertisement_id')
+        advertisement_id = buy_offer_tx.asset.get('advertisement_id') or buy_offer_tx.asset.get('data', {}).get('advertisement_id')
         advertisement_tx = bigchain.get_transaction(advertisement_id)
         
         if not advertisement_tx:
@@ -2466,7 +2625,7 @@ class Transaction(object):
 
         # Validate asset ID consistency
         asset_id = self.get_asset_id(input_txs)
-        tx_asset_id = self.asset["id"]
+        tx_asset_id = self.asset["data"]["id"]
 
         if asset_id != tx_asset_id:
             raise AssetIdMismatch(
@@ -2474,7 +2633,7 @@ class Transaction(object):
             )
 
         # Validate sell transaction exists
-        sell_transaction_id = self.asset.get('sell_transaction_id')
+        sell_transaction_id = self.asset.get('data', {}).get('sell_transaction_id')
         if not sell_transaction_id:
             raise ValueError("Request return must reference a sell transaction")
             
@@ -2489,7 +2648,7 @@ class Transaction(object):
         requester_pub_key = self.metadata.get('requester_public_key')
         
         # Get the buy offer from the sell transaction
-        buy_offer_id = sell_tx.asset.get('buy_offer_id')
+        buy_offer_id = sell_tx.asset.get('buy_offer_id') or sell_tx.asset.get('data', {}).get('buy_offer_id')
         buy_offer_tx = bigchain.get_transaction(buy_offer_id)
         
         if not buy_offer_tx:
@@ -2520,6 +2679,228 @@ class Transaction(object):
 
         # Validate signature
         if not self.inputs_valid(input_conditions):
+            raise InvalidSignature("Transaction signature is invalid.")
+
+        return True
+
+    def validate_update_adv_inputs(self, bigchain, current_transactions=[]):
+        """Validate update advertisement transaction inputs according to business rules.
+        
+        Validation rules:
+        1. References exactly one Advertisement transaction
+        2. Only the advertiser can update the advertisement
+        3. Advertisement must be OPEN to update
+        4. Status transitions must follow: OPEN -> LOCKED -> CLOSED
+        5. New values must be valid (positive amounts, future expiry)
+        
+        Args:
+            bigchain: BigchainDB instance for database queries
+            current_transactions: List of current uncommitted transactions
+            
+        Returns:
+            bool: True if validation passes
+            
+        Raises:
+            Various validation errors if rules are violated
+        """
+        # Validate exactly one input
+        if len(self.inputs) != 1:
+            raise ValueError("Update advertisement must have exactly one input")
+            
+        input_ = self.inputs[0]
+        input_txid = input_.fulfills.txid
+        input_tx = bigchain.get_transaction(input_txid)
+
+        if input_tx is None:
+            for ctxn in current_transactions:
+                if ctxn.id == input_txid:
+                    input_tx = ctxn
+
+        if input_tx is None:
+            raise InputDoesNotExist("input `{}` doesn't exist".format(input_txid))
+
+        # Check if input is already spent
+        spent = bigchain.get_spent(
+            input_txid, input_.fulfills.output, current_transactions
+        )
+        if spent:
+            raise DoubleSpend("input `{}` was already spent".format(input_txid))
+
+        # Get the output being referenced
+        output = input_tx.outputs[input_.fulfills.output]
+        input_conditions = [output]
+        input_txs = [input_tx]
+
+        # Interpret asset.data.id as the advertisement id
+        advertisement_id = self.asset.get('data', {}).get('id')
+        if not advertisement_id:
+            raise ValueError("Update advertisement must provide advertisement id in asset.data.id")
+        
+        # Validate advertisement exists
+        advertisement_tx = bigchain.get_transaction(advertisement_id)
+        if not advertisement_tx:
+            raise ValueError(f"Referenced advertisement {advertisement_id} does not exist")
+            
+        if advertisement_tx.operation != 'ADVERTISEMENT':
+            raise ValueError(f"Referenced transaction {advertisement_id} is not an advertisement")
+
+        # Validate advertiser = updater
+        updater_pub_key = self.metadata.get('advertiser_public_key')
+        advertiser_pub_key = advertisement_tx.metadata.get('advertiser_public_key')
+        
+        if updater_pub_key != advertiser_pub_key:
+            raise ValueError("Only the advertiser can update the advertisement")
+
+        # Validate advertisement is OPEN
+        current_status = advertisement_tx.metadata.get('status', 'OPEN')
+        if current_status != 'OPEN':
+            raise ValueError("Advertisement must be OPEN to update")
+
+        # Validate status transition (using metadata.status)
+        new_status = self.metadata.get('status')
+        valid_transitions = {
+            'OPEN': ['LOCKED', 'CLOSED'],
+            'LOCKED': ['CLOSED'],
+            'CLOSED': []
+        }
+        
+        if new_status not in valid_transitions.get(current_status, []):
+            raise ValueError(f"Invalid status transition from {current_status} to {new_status}")
+
+        # Validate value (optional)
+        new_value = self.metadata.get('value')
+        if new_value is not None:
+            if not isinstance(new_value, str) or not new_value.isdigit() or int(new_value) <= 0:
+                raise ValueError("Value must be a positive number if provided")
+
+        # Validate expiry date (optional)
+        new_expiry = self.metadata.get('expiry_date')
+        # if provided, ensure non-empty string
+        if new_expiry is not None and not isinstance(new_expiry, str):
+            raise ValueError("Expiry date must be a string if provided")
+
+        # Validate signature
+        if not self._validate_signature(input_conditions):
+            raise InvalidSignature("Transaction signature is invalid.")
+
+        return True
+
+    def validate_seller_accept_return_inputs(self, bigchain, current_transactions=[]):
+        """Validate seller accept return transaction inputs according to business rules.
+        
+        Validation rules:
+        1. References exactly one Request Return transaction
+        2. Only the seller can accept the return
+        3. Request return must be PENDING
+        4. Refund details must be valid
+        5. No other active returns for the same sale
+        
+        Args:
+            bigchain: BigchainDB instance for database queries
+            current_transactions: List of current uncommitted transactions
+            
+        Returns:
+            bool: True if validation passes
+            
+        Raises:
+            Various validation errors if rules are violated
+        """
+        # Validate exactly one input
+        if len(self.inputs) != 1:
+            raise ValueError("Seller accept return must have exactly one input")
+            
+        input_ = self.inputs[0]
+        input_txid = input_.fulfills.txid
+        input_tx = bigchain.get_transaction(input_txid)
+
+        if input_tx is None:
+            for ctxn in current_transactions:
+                if ctxn.id == input_txid:
+                    input_tx = ctxn
+
+        if input_tx is None:
+            raise InputDoesNotExist("input `{}` doesn't exist".format(input_txid))
+
+        # Check if input is already spent
+        spent = bigchain.get_spent(
+            input_txid, input_.fulfills.output, current_transactions
+        )
+        if spent:
+            raise DoubleSpend("input `{}` was already spent".format(input_txid))
+
+        # Get the output being referenced
+        output = input_tx.outputs[input_.fulfills.output]
+        input_conditions = [output]
+        input_txs = [input_tx]
+
+        # Validate asset ID consistency
+        asset_id = self.get_asset_id(input_txs)
+        tx_asset_id = self.asset["data"]["id"]
+
+        if asset_id != tx_asset_id:
+            raise AssetIdMismatch(
+                "The asset id of the input does not match the asset id of the transaction"
+            )
+
+        # Validate request return exists
+        request_return_id = self.asset.get('data', {}).get('request_return_id')
+        if not request_return_id:
+            raise ValueError("Seller accept return must reference a request return")
+            
+        request_return_tx = bigchain.get_transaction(request_return_id)
+        if not request_return_tx:
+            raise ValueError(f"Referenced request return {request_return_id} does not exist")
+            
+        if request_return_tx.operation != 'REQUEST_RETURN':
+            raise ValueError(f"Referenced transaction {request_return_id} is not a request return")
+
+        # Validate seller = accepter
+        accepter_pub_key = self.metadata.get('seller_public_key')
+        
+        # Get the sell transaction from the request return
+        sell_transaction_id = request_return_tx.asset.get('sell_transaction_id') or request_return_tx.asset.get('data', {}).get('sell_transaction_id')
+        sell_tx = bigchain.get_transaction(sell_transaction_id)
+        
+        if not sell_tx:
+            raise ValueError(f"Referenced sell transaction {sell_transaction_id} does not exist")
+            
+        # Get the advertisement from the sell transaction
+        buy_offer_id = sell_tx.asset.get('buy_offer_id') or sell_tx.asset.get('data', {}).get('buy_offer_id')
+        buy_offer_tx = bigchain.get_transaction(buy_offer_id)
+        
+        if not buy_offer_tx:
+            raise ValueError(f"Referenced buy offer {buy_offer_id} does not exist")
+            
+        advertisement_id = buy_offer_tx.asset.get('advertisement_id') or buy_offer_tx.asset.get('data', {}).get('advertisement_id')
+        advertisement_tx = bigchain.get_transaction(advertisement_id)
+        
+        if not advertisement_tx:
+            raise ValueError(f"Referenced advertisement {advertisement_id} does not exist")
+            
+        seller_pub_key = advertisement_tx.metadata.get('advertiser_public_key')
+        
+        if accepter_pub_key != seller_pub_key:
+            raise ValueError("Accepter must be the seller from the sell transaction")
+
+        # Validate request return is PENDING
+        return_status = request_return_tx.metadata.get('return_policy_details', {}).get('return_status')
+        if return_status != 'PENDING':
+            raise ValueError("Request return must be PENDING to accept")
+
+        # Validate refund details
+        refund_details = self.metadata.get('refund_details', {})
+        if not refund_details:
+            raise ValueError("Seller accept return must include refund details")
+            
+        refund_amount = refund_details.get('refund_amount')
+        refund_currency = refund_details.get('refund_currency')
+        refund_method = refund_details.get('refund_method')
+        
+        if not refund_amount or not refund_currency or not refund_method:
+            raise ValueError("Refund details must include amount, currency, and method")
+
+        # Validate signature
+        if not self._validate_signature(input_conditions):
             raise InvalidSignature("Transaction signature is invalid.")
 
         return True

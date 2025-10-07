@@ -10,15 +10,19 @@ properties:
     type: object
     additionalProperties: false
     properties:
-      id:
-        "$ref": "#/definitions/sha3_hexdigest"
       data:
-        anyOf:
-          - type: object
-            additionalProperties: true
-          - type: "null"
+        type: object
+        additionalProperties: true
+        properties:
+          id:
+            "$ref": "#/definitions/sha3_hexdigest"
+          buy_offer_id:
+            "$ref": "#/definitions/sha3_hexdigest"
+        required:
+        - id
+        - buy_offer_id
     required:
-      - id
+    - data
   metadata:
     required:
       - seller_public_key
@@ -53,3 +57,72 @@ properties:
     maxItems: 2
     items:
       "$ref": "#/definitions/output"
+definitions:
+  sha3_hexdigest:
+    pattern: "[0-9a-f]{64}"
+    type: string
+  base58:
+    pattern: "[1-9a-zA-Z^OIl]{43,44}"
+    type: string
+  input:
+    type: object
+    additionalProperties: false
+    required:
+      - owners_before
+      - fulfillment
+    properties:
+      fulfillment:
+        type: string
+      fulfillment_details:
+        type: object
+        additionalProperties: true
+      owners_before:
+        type: array
+        items:
+          "$ref": "#/definitions/base58"
+      fulfills:
+        anyOf:
+          - type: "null"
+          - type: object
+            additionalProperties: false
+            required:
+              - transaction_id
+              - output_index
+            properties:
+              transaction_id:
+                "$ref": "#/definitions/sha3_hexdigest"
+              output_index:
+                type: integer
+                minimum: 0
+  output:
+    type: object
+    additionalProperties: false
+    required:
+      - amount
+      - condition
+      - public_keys
+    properties:
+      amount:
+        type: string
+        pattern: "^[0-9]{1,20}$"
+      condition:
+        type: object
+        additionalProperties: false
+        required:
+          - details
+          - uri
+        properties:
+          details:
+            type: object
+            additionalProperties: true
+          uri:
+            type: string
+            pattern: "^ni:///sha-256;([a-zA-Z0-9_-]{0,86})[?]\
+              (fpt=(ed25519|threshold)-sha-256(&)?|cost=[0-9]+(&)?|\
+              subtypes=ed25519-sha-256(&)?){2,3}$"
+      public_keys:
+        anyOf:
+          - type: array
+            items:
+              "$ref": "#/definitions/base58"
+          - type: "null"

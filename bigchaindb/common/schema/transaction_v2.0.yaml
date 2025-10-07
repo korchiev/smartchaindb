@@ -77,6 +77,8 @@ definitions:
       - SELL
       - REQUEST_RETURN
       - ACCEPT_RETURN
+      - UPDATE_ADV
+      - SELLER_ACCEPT_RETURN
   asset:
     type: object
     additionalProperties: false

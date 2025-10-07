@@ -1,5 +1,5 @@
 type: object
-title: Transaction Schema - BUY_OFFER specific properties
+title: Transaction Schema - UPDATE_ADV specific properties
 required:
 - asset
 - metadata
@@ -16,52 +16,45 @@ properties:
         properties:
           id:
             "$ref": "#/definitions/sha3_hexdigest"
-          advertisement_id:
-            "$ref": "#/definitions/sha3_hexdigest"
         required:
         - id
-        - advertisement_id
     required:
     - data
   metadata:
     required:
-    - buyer_public_key
-    - offer_amount
-    - offer_expiry
-    - escrow_public_key
+    - advertiser_public_key
+    - new_status
+    - new_value
+    - new_expiry_date
     properties:
-      buyer_public_key:
+      advertiser_public_key:
         "$ref": "#/definitions/base58"
-      offer_amount:
+      new_status:
+        type: string
+        enum: ["OPEN", "LOCKED", "CLOSED"]
+      new_value:
         type: string
         pattern: "^[0-9]{1,20}$"
-      offer_currency:
-        type: string
-        minLength: 1
-      offer_timestamp:
+      new_expiry_date:
         type: string
         format: date-time
-      offer_expiry:
+      update_timestamp:
         type: string
         format: date-time
-      escrow_public_key:
-        "$ref": "#/definitions/base58"
-      payment_asset_id:
-        "$ref": "#/definitions/sha3_hexdigest"
-      requestCreationTimestamp:
+      update_reason:
         type: string
-      offer_notes:
-        type: string
-        maxLength: 1000
+        maxLength: 500
     additionalProperties: true
   inputs:
     type: array
     minItems: 1
+    maxItems: 1
     items:
       "$ref": "#/definitions/input"
   outputs:
     type: array
-    minItems: 1
+    minItems: 0
+    maxItems: 1
     items:
       "$ref": "#/definitions/output"
 definitions:
