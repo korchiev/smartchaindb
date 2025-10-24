@@ -182,6 +182,8 @@ class SHACLValidatorClient:
                     turtle += f'            bdb:{key} "{escaped_value}" ;\n'
                 elif isinstance(value, (int, float)):
                     turtle += f'            bdb:{key} {value} ;\n'
+                elif isinstance(value, bool):
+                    turtle += f'            bdb:{key} {"true" if value else "false"} ;\n'
             
             turtle = turtle.rstrip(';\n') + '\n'
             turtle += "        ]\n"
@@ -199,6 +201,8 @@ class SHACLValidatorClient:
                     turtle += f'            bdb:{key} "{escaped_value}" ;\n'
                 elif isinstance(value, (int, float)):
                     turtle += f'            bdb:{key} {value} ;\n'
+                elif isinstance(value, bool):
+                    turtle += f'            bdb:{key} {"true" if value else "false"} ;\n'
             
             turtle = turtle.rstrip(';\n') + '\n'
             turtle += "        ]\n"
@@ -218,6 +222,8 @@ class SHACLValidatorClient:
                         turtle += f'            bdb:{key} "{value}" ;\n'
                     elif isinstance(value, (int, float)):
                         turtle += f'            bdb:{key} {value} ;\n'
+                    elif isinstance(value, bool):
+                        turtle += f'            bdb:{key} {"true" if value else "false"} ;\n'
                 turtle = turtle.rstrip(';\n') + '\n'
                 turtle += "        ] ;\n"
             
@@ -230,8 +236,14 @@ class SHACLValidatorClient:
         """Serialize metadata field to Turtle."""
         turtle = "    bdb:metadata [\n"
         
+        # Debug: print metadata to see types
+        logger.info(f"DEBUG Metadata: {[(k, type(v).__name__, v) for k, v in metadata.items()]}")
+        
         for key, value in metadata.items():
-            if isinstance(value, str):
+            if isinstance(value, bool):
+                # Check bool BEFORE int because bool is a subclass of int in Python
+                turtle += f'        bdb:{key} {"true" if value else "false"} ;\n'
+            elif isinstance(value, str):
                 # Check if it looks like a datetime string
                 if 'timestamp' in key.lower() or 'expiry' in key.lower() or 'date' in key.lower():
                     turtle += f'        bdb:{key} "{value}"^^xsd:dateTime ;\n'
@@ -242,8 +254,6 @@ class SHACLValidatorClient:
                 turtle += f'        bdb:{key} {value} ;\n'
             elif isinstance(value, float):
                 turtle += f'        bdb:{key} {value} ;\n'
-            elif isinstance(value, bool):
-                turtle += f'        bdb:{key} {"true" if value else "false"} ;\n'
             elif isinstance(value, (list, dict)):
                 # Skip complex nested structures for now
                 logger.debug(f"Skipping complex metadata field: {key}")
