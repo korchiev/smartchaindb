@@ -16,7 +16,11 @@ from threading import Lock
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Dict, Any, Tuple, List, Optional
-from bigchaindb import config
+try:
+    from bigchaindb import config
+except ImportError:
+    # Fallback for when config is not available (e.g., during Docker build)
+    config = None
 
 logger = logging.getLogger(__name__)
 metrics_logger = logging.getLogger(__name__ + '.metrics')
@@ -220,9 +224,13 @@ class SHACLValidatorClient:
             timeout: HTTP request timeout in seconds (default from config)
             phase: Validation phase identifier (HTTP_POST, CHECK_TX, DELIVER_TX)
         """
-        shacl_config = config.get('shacl', {})
+        shacl_config = config.get('shacl', {}) if config else {}
         
-        self.enabled = shacl_config.get('enabled', False)
+        # Check environment variable for SHACL enablement
+        import os
+        env_enabled = os.getenv('BIGCHAINDB_SHACL_ENABLED', '').lower() in ('true', '1', 'yes')
+        
+        self.enabled = shacl_config.get('enabled', False) or env_enabled
         self.endpoint = endpoint or shacl_config.get('endpoint', 'http://shacleng:3000')
         self.timeout = timeout or shacl_config.get('timeout', 10)
         self.phase = phase

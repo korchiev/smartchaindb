@@ -67,10 +67,14 @@ class Transaction(Transaction):
             )
         
         # ═══════════════════════════════════════════════════════════════
-        # SHACL VALIDATION WITH CACHING
-        # Handles: syntactic, semantic, and state consistency
+        # ENHANCED STATE-AWARE SHACL VALIDATION WITH ROBUST CACHING
+        # Handles: syntactic, semantic, and state consistency across all phases
         # ═══════════════════════════════════════════════════════════════
-        shacl_validator = get_shacl_validator(phase=phase)
+        try:
+            from bigchaindb.common.shacl_validator_state_aware_enhanced import shacl_validator
+        except ImportError:
+            # Fallback to original validator
+            shacl_validator = get_shacl_validator(phase=phase)
         
         if not shacl_validator.enabled:
             raise ValidationError(
@@ -78,9 +82,10 @@ class Transaction(Transaction):
                 "Set BIGCHAINDB_SHACL_ENABLED=true to enable validation."
             )
         
-        logger.debug(f"Validating {self.operation} transaction {self.id} via SHACL (phase={phase})")
+        logger.debug(f"Validating {self.operation} transaction {self.id} via Enhanced SHACL (phase={phase})")
         
-        conforms, results = shacl_validator.validate_transaction(self.to_dict())
+        # Use enhanced state-aware validation with phase support
+        conforms, results = shacl_validator.validate_transaction(self.to_dict(), phase=phase)
         
         if not conforms:
             # Extract error messages from SHACL results

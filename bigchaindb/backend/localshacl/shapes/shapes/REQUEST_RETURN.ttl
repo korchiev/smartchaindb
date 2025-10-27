@@ -1,0 +1,109 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix bdb: <http://bigchaindb.com/ns#> .
+
+# REQUEST_RETURN Transaction Shape
+bdb:RequestReturnTransactionShape a sh:NodeShape ;
+    sh:targetClass bdb:RequestReturnTransaction ;
+    sh:property [
+        sh:path bdb:operation ;
+        sh:hasValue "REQUEST_RETURN" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Operation must be 'REQUEST_RETURN'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:version ;
+        sh:hasValue "2.0" ;
+        sh:minCount 1 ;
+        sh:message "Version must be '2.0'" ;
+    ] ;
+    sh:property [
+        sh:path bdb:asset ;
+        sh:node bdb:RequestReturnAssetShape ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset is required for REQUEST_RETURN transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:metadata ;
+        sh:node bdb:RequestReturnMetadataShape ;
+        sh:minCount 1 ;
+        sh:message "Metadata is required for REQUEST_RETURN transaction" ;
+    ] ;
+    sh:property [
+        sh:path bdb:inputs ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "REQUEST_RETURN must have exactly one input" ;
+    ] ;
+    sh:property [
+        sh:path bdb:outputs ;
+        sh:minCount 0 ;
+        sh:message "REQUEST_RETURN may have zero outputs" ;
+    ] .
+
+# REQUEST_RETURN Asset Shape
+bdb:RequestReturnAssetShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "Asset ID must be a 64-character hexadecimal string (SHA3 hash)" ;
+    ] ;
+    sh:property [
+        sh:path bdb:sell_transaction_id ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9a-f]{64}$" ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+        sh:message "sell_transaction_id must be a 64-character hexadecimal string (SHA3 hash)" ;
+    ] .
+
+# REQUEST_RETURN Metadata Shape
+bdb:RequestReturnMetadataShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:requester_public_key ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[1-9a-zA-Z^OIl]{43,44}$" ;
+        sh:minCount 1 ;
+        sh:message "requester_public_key must be a valid base58 string" ;
+    ] ;
+    sh:property [
+        sh:path bdb:return_reason ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "return_reason is required" ;
+    ] ;
+    sh:property [
+        sh:path bdb:return_request_timestamp ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:message "return_request_timestamp is required" ;
+    ] ;
+    sh:property [
+        sh:path bdb:return_policy_details ;
+        sh:node bdb:ReturnPolicyDetailsShape ;
+        sh:minCount 1 ;
+        sh:message "return_policy_details is required" ;
+    ] .
+
+bdb:ReturnPolicyDetailsShape a sh:NodeShape ;
+    sh:property [
+        sh:path bdb:return_window_days ;
+        sh:datatype xsd:integer ;
+        sh:minInclusive 0 ;
+    ] ;
+    sh:property [
+        sh:path bdb:return_conditions ;
+        sh:datatype xsd:string ;
+    ] ;
+    sh:property [
+        sh:path bdb:return_status ;
+        sh:datatype xsd:string ;
+        sh:in ("PENDING" "APPROVED" "REJECTED" "COMPLETED") ;
+    ] .
+
+

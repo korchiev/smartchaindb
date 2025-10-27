@@ -47,6 +47,7 @@ services:
       BIGCHAINDB_TENDERMINT_HOST: tendermint
       BIGCHAINDB_TENDERMINT_PORT: 26657
       BIGCHAINDB_ENDPOINT: bigchaindb
+      BIGCHAINDB_SHACL_ENABLED: true
     ports:
       - "9984:9984"
       - "9985:9985"

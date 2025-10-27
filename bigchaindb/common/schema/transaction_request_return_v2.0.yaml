@@ -62,12 +62,22 @@ definitions:
     - fulfills
     properties:
       fulfills:
-        type: object
-        required:
-        - txid
-        - output
-        properties:
-          txid:
-            type: string
-          output:
-            type: integer
+        anyOf:
+          - type: object
+            required:
+            - txid
+            - output
+            properties:
+              txid:
+                type: string
+              output:
+                type: integer
+          - type: object
+            required:
+            - transaction_id
+            - output_index
+            properties:
+              transaction_id:
+                type: string
+              output_index:
+                type: integer

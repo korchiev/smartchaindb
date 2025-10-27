@@ -83,6 +83,10 @@ definitions:
     properties:
       id:
         "$ref": "#/definitions/sha3_hexdigest"
+      sell_transaction_id:
+        "$ref": "#/definitions/sha3_hexdigest"
+      request_return_id:
+        "$ref": "#/definitions/sha3_hexdigest"
       data:
         anyOf:
           - type: object
