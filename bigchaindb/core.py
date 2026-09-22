@@ -211,25 +211,24 @@ class App(BaseApplication):
         self.abort_if_abci_chain_is_not_synced()
 
         logger.debug("deliver_tx: %s", raw_transaction)
-        status = "deliver_tx"
         transaction = self.bigchaindb.is_valid_transaction(
             decode_transaction(raw_transaction), self.block_transactions
         )
 
         if not transaction:
             logger.debug("deliver_tx: INVALID")
-            status = "INVALID"
-        else:
-            logger.debug("storing tx")
-            self.block_txn_ids.append(transaction.id)
-            self.block_transactions.append(transaction)
-            log_metric(
-                "deliver_tx",
-                transaction.metadata["requestCreationTimestamp"],
-                transaction.operation,
-                transaction._id,
-                None
-            )
+            return self.abci.ResponseDeliverTx(code=CodeTypeError)
+
+        logger.debug("storing tx")
+        self.block_txn_ids.append(transaction.id)
+        self.block_transactions.append(transaction)
+        log_metric(
+            "deliver_tx",
+            (transaction.metadata or {}).get("requestCreationTimestamp"),
+            transaction.operation,
+            transaction._id,
+            None
+        )
 
         if transaction.operation == Transaction.ACCEPT:
             self.bigchaindb.store_accept_tx_updates(
@@ -238,11 +237,10 @@ class App(BaseApplication):
                     "accept_id": transaction._id,
                     "rfq_id": transaction.asset["data"]["rfq_id"],
                     "winning_bid_id": transaction.asset["data"]["winner_bid_id"],
-                    "status": status,
+                    "status": "deliver_tx",
                 },
             )
-        code = CodeTypeError if status == "INVALID" else CodeTypeOk
-        return self.abci.ResponseDeliverTx(code=code)
+        return self.abci.ResponseDeliverTx(code=CodeTypeOk)
 
     def end_block(self, request_end_block):
         """Calculate block hash using transaction ids and previous block

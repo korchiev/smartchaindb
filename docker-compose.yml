@@ -47,6 +47,7 @@ services:
       BIGCHAINDB_TENDERMINT_HOST: tendermint
       BIGCHAINDB_TENDERMINT_PORT: 26657
       BIGCHAINDB_ENDPOINT: bigchaindb
+      BIGCHAINDB_SERVER_WORKERS: 2
     ports:
       - "9984:9984"
       - "9985:9985"
@@ -57,11 +58,12 @@ services:
           "CMD",
           "bash",
           "-c",
-          "curl http://bigchaindb:9984 && curl http://tendermint:26657/abci_query",
+          "curl -sf http://127.0.0.1:9984",
         ]
       interval: 3s
       timeout: 5s
-      retries: 3
+      retries: 10
+      start_period: 40s
     command: "bigchaindb -l DEBUG start"
     restart: always
   tendermint:

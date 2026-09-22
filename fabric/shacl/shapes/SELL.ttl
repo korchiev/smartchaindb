@@ -1,0 +1,66 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix fabric: <http://smartchaindb.org/fabric#> .
+
+fabric:SellShape a sh:NodeShape ;
+    sh:targetClass fabric:SELL ;
+    sh:property [
+        sh:path fabric:operation ;
+        sh:hasValue "SELL" ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "operation must be SELL" ;
+    ] ;
+    sh:property [
+        sh:path fabric:sellId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "sellId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:offerId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "offerId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:seller ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "seller is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:offerExists ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "buy offer must exist" ;
+    ] ;
+    sh:property [
+        sh:path fabric:offerOpen ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "buy offer must be OPEN" ;
+    ] ;
+    sh:property [
+        sh:path fabric:advertisementOpen ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "advertisement must be OPEN" ;
+    ] ;
+    sh:property [
+        sh:path fabric:sellerIsAdvertiser ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "seller must be the advertiser" ;
+    ] ;
+    sh:property [
+        sh:path fabric:sellerOwnsAsset ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "seller must currently own the asset" ;
+    ] ;
+    sh:property [
+        sh:path fabric:offerAlreadySold ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue false ;
+        sh:message "buy offer has already been accepted" ;
+    ] .

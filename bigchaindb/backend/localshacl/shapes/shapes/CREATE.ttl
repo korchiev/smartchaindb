@@ -4,7 +4,7 @@
 
 # CREATE Transaction Shape
 bdb:CreateTransactionShape a sh:NodeShape ;
-    sh:targetClass bdb:CreateTransaction ;
+    sh:targetClass bdb:CREATETransaction ;
     sh:property [
         sh:path bdb:operation ;
         sh:hasValue "CREATE" ;
@@ -75,7 +75,7 @@ bdb:AssetDataShape a sh:NodeShape ;
 bdb:CreateMetadataShape a sh:NodeShape ;
     sh:property [
         sh:path bdb:requestCreationTimestamp ;
-        sh:datatype xsd:string ;
+        sh:datatype xsd:dateTime ;
         sh:minCount 1 ;
         sh:message "requestCreationTimestamp is required in metadata" ;
     ] .

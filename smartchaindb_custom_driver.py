@@ -133,6 +133,10 @@ class SmartChainDBDriver:
         if metadata is None:
             metadata = {}
             
+        # Validate buy_offer_id is not empty
+        if not buy_offer_id or buy_offer_id == '':
+            raise ValueError("buy_offer_id is required and cannot be empty for SELL transaction")
+            
         # Add required timestamp
         metadata['requestCreationTimestamp'] = datetime.now().isoformat()
         
@@ -151,16 +155,13 @@ class SmartChainDBDriver:
         sell_input = Input.generate([signers])
         sell_input.fulfills = fulfills_link
         
-        # Use SmartChainDB's validate_sell method to get inputs and outputs
-        (inputs, outputs) = Transaction.validate_sell([sell_input], asset_id, buy_offer_id, metadata)
-        
-        # Create SELL transaction with correct asset structure
-        tx = Transaction(
-            Transaction.SELL,
-            {"data": {"id": asset_id, "buy_offer_id": buy_offer_id}},
-            inputs,
-            outputs,
-            metadata
+        # Use SmartChainDB's sell method to create transaction with correct asset structure
+        # Transaction.sell() creates asset as: {"data": {"id": asset_id, "buy_offer_id": buy_offer_id}}
+        tx = Transaction.sell(
+            inputs=[sell_input],
+            asset_id=asset_id,
+            buy_offer_id=buy_offer_id,
+            metadata=metadata
         )
         
         # Convert sale_amount back to string for schema compliance
@@ -171,6 +172,7 @@ class SmartChainDBDriver:
         print(f"🔍 SELL transaction prepared:")
         print(f"   Operation: {tx_dict.get('operation', 'MISSING')}")
         print(f"   Asset: {tx_dict.get('asset', 'MISSING')}")
+        print(f"   Buy Offer ID: {buy_offer_id}")
         print(f"   Metadata keys: {list(tx_dict.get('metadata', {}).keys())}")
         
         return tx_dict
@@ -183,6 +185,19 @@ class SmartChainDBDriver:
         # Add required timestamp
         metadata['requestCreationTimestamp'] = datetime.now().isoformat()
         
+        # Add required fields for validate_request_return
+        if 'requester_public_key' not in metadata:
+            metadata['requester_public_key'] = signers.public_key if hasattr(signers, 'public_key') else signers
+        if 'return_reason' not in metadata:
+            metadata['return_reason'] = metadata.get('reason', 'Performance test return')
+        if 'return_request_timestamp' not in metadata:
+            metadata['return_request_timestamp'] = datetime.now().isoformat()
+        if 'return_policy_details' not in metadata:
+            metadata['return_policy_details'] = {
+                'policy_type': 'standard',
+                'refund_percentage': 100
+            }
+        
         # REQUEST_RETURN transactions don't reference previous transactions (schema requires fulfills: null)
         request_return_input = Input.generate([signers])
         request_return_input.fulfills = None
@@ -193,14 +208,15 @@ class SmartChainDBDriver:
         # Create output for the return request (required by schema)
         return_output = Output.generate([signers], amount=1)
         
-        # Create REQUEST_RETURN transaction with correct asset structure
-        tx = Transaction(
-            Transaction.REQUEST_RETURN,
-            {"data": {"id": asset_id, "sell_transaction_id": sell_transaction_id}},
+        # Create REQUEST_RETURN transaction with correct asset structure (use Transaction.request_return)
+        tx = Transaction.request_return(
             inputs,
-            [return_output],
+            asset_id,
+            sell_transaction_id,
             metadata
         )
+        # Add output (request_return method doesn't create outputs)
+        tx.outputs = [return_output]
         
         tx_dict = tx.to_dict()
         print(f"🔍 REQUEST_RETURN transaction prepared:")
@@ -233,9 +249,10 @@ class SmartChainDBDriver:
         seller_output = Output.generate([signers], amount=1)
         
         # Create SELLER_ACCEPT_RETURN transaction with correct asset structure
+        # Schema requires asset.id at top level, data is optional
         tx = Transaction(
             Transaction.SELLER_ACCEPT_RETURN,
-            {"data": {"id": asset_id, "request_return_id": request_return_id}},
+            {"id": asset_id, "data": {"id": asset_id, "request_return_id": request_return_id}},
             inputs,
             [seller_output],
             metadata
@@ -269,9 +286,10 @@ class SmartChainDBDriver:
         update_output = Output.generate([signers], amount=1)
         
         # Create UPDATE_ADV transaction with correct asset structure
+        # Schema requires asset.id at top level, data is optional
         tx = Transaction(
             Transaction.UPDATE_ADV,
-            {"data": {"id": asset_id}},
+            {"id": asset_id, "data": {"id": asset_id}},
             inputs,
             [update_output],
             metadata

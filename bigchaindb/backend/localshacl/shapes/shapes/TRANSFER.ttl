@@ -4,7 +4,7 @@
 
 # TRANSFER Transaction Shape
 bdb:TransferTransactionShape a sh:NodeShape ;
-    sh:targetClass bdb:TransferTransaction ;
+    sh:targetClass bdb:TRANSFERTransaction ;
     sh:property [
         sh:path bdb:operation ;
         sh:hasValue "TRANSFER" ;

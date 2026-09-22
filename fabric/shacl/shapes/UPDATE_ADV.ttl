@@ -1,0 +1,42 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix fabric: <http://smartchaindb.org/fabric#> .
+
+fabric:UpdateAdvShape a sh:NodeShape ;
+    sh:targetClass fabric:UPDATE_ADV ;
+    sh:property [
+        sh:path fabric:operation ;
+        sh:hasValue "UPDATE_ADV" ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "operation must be UPDATE_ADV" ;
+    ] ;
+    sh:property [
+        sh:path fabric:advId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "advId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:updater ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "updater is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:advertisementExists ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "advertisement must exist" ;
+    ] ;
+    sh:property [
+        sh:path fabric:updaterIsAdvertiser ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "only the advertiser can update the advertisement" ;
+    ] ;
+    sh:property [
+        sh:path fabric:validStatusTransition ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "invalid advertisement status transition" ;
+    ] .

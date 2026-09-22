@@ -1,0 +1,54 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix fabric: <http://smartchaindb.org/fabric#> .
+
+fabric:SellerAcceptReturnShape a sh:NodeShape ;
+    sh:targetClass fabric:SELLER_ACCEPT_RETURN ;
+    sh:property [
+        sh:path fabric:operation ;
+        sh:hasValue "SELLER_ACCEPT_RETURN" ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "operation must be SELLER_ACCEPT_RETURN" ;
+    ] ;
+    sh:property [
+        sh:path fabric:acceptId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "acceptId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:requestId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "requestId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:seller ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "seller is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:returnExists ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "return request must exist" ;
+    ] ;
+    sh:property [
+        sh:path fabric:returnOpen ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "return request must be OPEN" ;
+    ] ;
+    sh:property [
+        sh:path fabric:sellerIsOriginalSeller ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "only the original seller can accept the return" ;
+    ] ;
+    sh:property [
+        sh:path fabric:acceptAlreadyExists ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue false ;
+        sh:message "a SELLER_ACCEPT_RETURN already exists for this request" ;
+    ] .

@@ -4,7 +4,7 @@
 
 # UPDATE_ADV Transaction Shape
 bdb:UpdateAdvTransactionShape a sh:NodeShape ;
-    sh:targetClass bdb:UpdateAdvTransaction ;
+    sh:targetClass bdb:UPDATE_ADVTransaction ;
     sh:property [
         sh:path bdb:operation ;
         sh:hasValue "UPDATE_ADV" ;

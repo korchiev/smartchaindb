@@ -1,0 +1,30 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix fabric: <http://smartchaindb.org/fabric#> .
+
+fabric:CreateShape a sh:NodeShape ;
+    sh:targetClass fabric:CREATE ;
+    sh:property [
+        sh:path fabric:operation ;
+        sh:hasValue "CREATE" ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "operation must be CREATE" ;
+    ] ;
+    sh:property [
+        sh:path fabric:assetId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "assetId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:owner ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "owner is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:assetExists ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue false ;
+        sh:message "asset must not already exist" ;
+    ] .

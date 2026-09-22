@@ -4,7 +4,7 @@
 
 # BUY_OFFER Transaction Shape
 bdb:BuyOfferTransactionShape a sh:NodeShape ;
-    sh:targetClass bdb:BuyOfferTransaction ;
+    sh:targetClass bdb:BUY_OFFERTransaction ;
     sh:property [
         sh:path bdb:operation ;
         sh:hasValue "BUY_OFFER" ;
@@ -119,7 +119,7 @@ bdb:BuyOfferMetadataShape a sh:NodeShape ;
     ] ;
     sh:property [
         sh:path bdb:requestCreationTimestamp ;
-        sh:datatype xsd:string ;
+        sh:datatype xsd:dateTime ;
         sh:minCount 1 ;
         sh:message "requestCreationTimestamp is required" ;
     ] ;

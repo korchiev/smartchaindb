@@ -1,5 +1,8 @@
 type: object
 title: Transaction Schema - BUY_OFFER specific properties
+# Envelope only. All metadata field constraints (buyer_public_key,
+# offer_amount, offer_expiry, escrow_public_key, ...) and the required
+# advertisement_id inside asset.data are enforced by BUY_OFFER.ttl.
 required:
 - asset
 - metadata
@@ -10,49 +13,17 @@ properties:
     type: object
     additionalProperties: false
     properties:
-      data:
-        type: object
-        additionalProperties: false
-        properties:
-          id:
-            "$ref": "#/definitions/sha3_hexdigest"
-          advertisement_id:
-            "$ref": "#/definitions/sha3_hexdigest"
-        required:
-        - id
-        - advertisement_id
-    required:
-    - data
-  metadata:
-    required:
-    - buyer_public_key
-    - offer_amount
-    - offer_expiry
-    - escrow_public_key
-    properties:
-      buyer_public_key:
-        "$ref": "#/definitions/base58"
-      offer_amount:
-        type: string
-        pattern: "^[0-9]{1,20}$"
-      offer_currency:
-        type: string
-        minLength: 1
-      offer_timestamp:
-        type: string
-        format: date-time
-      offer_expiry:
-        type: string
-        format: date-time
-      escrow_public_key:
-        "$ref": "#/definitions/base58"
-      payment_asset_id:
+      id:
         "$ref": "#/definitions/sha3_hexdigest"
-      requestCreationTimestamp:
-        type: string
-      offer_notes:
-        type: string
-        maxLength: 1000
+      data:
+        anyOf:
+          - type: object
+            additionalProperties: true
+          - type: "null"
+    required:
+    - id
+  metadata:
+    type: object
     additionalProperties: true
   inputs:
     type: array
@@ -64,3 +35,78 @@ properties:
     minItems: 1
     items:
       "$ref": "#/definitions/output"
+
+definitions:
+  sha3_hexdigest:
+    pattern: "[0-9a-f]{64}"
+    type: string
+  base58:
+    pattern: "[1-9a-zA-Z^OIl]{43,44}"
+    type: string
+  input:
+    type: "object"
+    additionalProperties: false
+    required:
+      - owners_before
+      - fulfillment
+    properties:
+      owners_before:
+        type: array
+        items:
+          "$ref": "#/definitions/base58"
+      fulfillment:
+        type: string
+        pattern: "^[a-zA-Z0-9_-]*$"
+      fulfills:
+        anyOf:
+          - type: "null"
+          - type: object
+            additionalProperties: false
+            required:
+              - transaction_id
+              - output_index
+            properties:
+              transaction_id:
+                "$ref": "#/definitions/sha3_hexdigest"
+              output_index:
+                type: integer
+                minimum: 0
+  output:
+    type: object
+    additionalProperties: false
+    required:
+      - amount
+      - condition
+      - public_keys
+    properties:
+      amount:
+        type: string
+        pattern: "^[0-9]{1,20}$"
+      condition:
+        type: object
+        additionalProperties: false
+        required:
+          - details
+          - uri
+        properties:
+          details:
+            type: object
+            additionalProperties: false
+            required:
+              - type
+              - public_key
+            properties:
+              type:
+                type: string
+                pattern: "^ed25519-sha-256$"
+              public_key:
+                "$ref": "#/definitions/base58"
+          uri:
+            type: string
+            pattern: "^ni:///sha-256;([a-zA-Z0-9_-]{0,86})[?]\
+              (fpt=(ed25519|threshold)-sha-256(&)?|cost=[0-9]+(&)?|\
+              subtypes=ed25519-sha-256(&)?){2,3}$"
+      public_keys:
+        type: array
+        items:
+          "$ref": "#/definitions/base58"

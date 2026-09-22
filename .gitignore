@@ -110,3 +110,12 @@ docs/contributing/source/cross-project-policies/*.md
 .vscode/
 
 .env
+
+# Node dependencies (BDB SHACL engine + Fabric client)
+**/node_modules/
+
+# Fabric Plan B generated artifacts
+fabric/chaincode/marketplace/vendor/
+fabric/client/wallet/
+fabric/client/metrics.fabric.jsonl
+

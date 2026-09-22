@@ -20,6 +20,7 @@ from bigchaindb.common.crypto import key_pair_from_ed25519_key
 from bigchaindb.common.transaction import Transaction
 
 metric_logger = logging.getLogger("metrics")
+logger = logging.getLogger(__name__)
 
 
 class ProcessGroup(object):
@@ -252,19 +253,29 @@ def recover(bigchain, return_queue):
 
 
 def log_metric(event_name, requestCreationTimestamp, operation, tx_id, accept_id):
-    delta = datetime.now() - datetime.strptime(
-        requestCreationTimestamp, "%Y-%m-%dT%H:%M:%S.%f"
-    )
-    metric_logger.info(
-        event_name
-        + ","
-        + str(int(delta.total_seconds() * 1000))
-        + ","
-        + str(operation)
-        + ","
-        + tx_id
-        + ","
-        + str(accept_id)
-        + ","
-        + str(time.time())
-    )
+    try:
+        created = datetime.now()
+        if requestCreationTimestamp:
+            ts = str(requestCreationTimestamp).replace("Z", "")
+            for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    created = datetime.strptime(ts.split("+")[0], fmt)
+                    break
+                except ValueError:
+                    continue
+        delta = datetime.now() - created
+        metric_logger.info(
+            event_name
+            + ","
+            + str(int(delta.total_seconds() * 1000))
+            + ","
+            + str(operation)
+            + ","
+            + str(tx_id)
+            + ","
+            + str(accept_id)
+            + ","
+            + str(time.time())
+        )
+    except Exception:
+        logger.exception("log_metric failed")

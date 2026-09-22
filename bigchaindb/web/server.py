@@ -102,7 +102,9 @@ def create_server(settings, log_config=None, bigchaindb_factory=None):
     settings = copy.deepcopy(settings)
 
     if not settings.get('workers'):
-        settings['workers'] = (multiprocessing.cpu_count() * 2) + 1
+        settings['workers'] = min((multiprocessing.cpu_count() * 2) + 1, 4)
+    else:
+        settings['workers'] = int(settings['workers'])
 
     if not settings.get('threads'):
         # Note: Threading is not recommended currently, as the frontend workload

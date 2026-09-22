@@ -45,10 +45,10 @@ async function initMongoDB() {
     const mongoHost = process.env.MONGO_HOST || 'mongodb';
     const mongoPort = process.env.MONGO_PORT || '27017';
     const mongoUser = process.env.MONGO_USER || 'admin';
-    const mongoPassword = process.env.MONGO_PASSWORD || 'password';
+    const mongoPassword = process.env.MONGO_PASSWORD || 'admin';
     const mongoDatabase = process.env.MONGO_DATABASE || 'bigchain';
     
-    const mongoUrl = `mongodb://${mongoUser}:${mongoPassword}@${mongoHost}:${mongoPort}`;
+    const mongoUrl = `mongodb://${mongoUser}:${mongoPassword}@${mongoHost}:${mongoPort}/?authSource=admin`;
     
     console.log(`Connecting to MongoDB at ${mongoHost}:${mongoPort}...`);
     
@@ -295,7 +295,7 @@ async function validateUpdateAdv(txData, transactions, errors) {
 }
 async function validateAdvertisement(txData, transactions, errors) {
     // Check if asset exists (if asset.id is provided)
-    const assetId = txData.metadata.asset_id || txData.asset.id;
+    const assetId = txData.metadata.asset_id || txData.asset.id || (txData.asset.data && txData.asset.data.id);
     
     if (assetId) {
         const asset = await transactions.findOne({

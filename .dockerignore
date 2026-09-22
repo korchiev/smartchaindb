@@ -7,3 +7,7 @@
 .travis.yml
 BigchainDB.egg-info/
 dist/
+**/node_modules/
+.pytest_cache/
+htmlcov/
+docker/data/

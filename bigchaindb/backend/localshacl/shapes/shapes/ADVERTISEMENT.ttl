@@ -4,7 +4,7 @@
 
 # ADVERTISEMENT Transaction Shape
 bdb:AdvertisementTransactionShape a sh:NodeShape ;
-    sh:targetClass bdb:AdvertisementTransaction ;
+    sh:targetClass bdb:ADVERTISEMENTTransaction ;
     sh:property [
         sh:path bdb:operation ;
         sh:hasValue "ADVERTISEMENT" ;
@@ -39,8 +39,8 @@ bdb:AdvertisementTransactionShape a sh:NodeShape ;
     ] ;
     sh:property [
         sh:path bdb:outputs ;
-        sh:minCount 1 ;
-        sh:message "ADVERTISEMENT transaction must have at least one output" ;
+        sh:maxCount 0 ;
+        sh:message "ADVERTISEMENT transaction must not create outputs" ;
     ] .
 
 # ADVERTISEMENT Asset Shape
@@ -110,7 +110,7 @@ bdb:AdvertisementMetadataShape a sh:NodeShape ;
     ] ;
     sh:property [
         sh:path bdb:requestCreationTimestamp ;
-        sh:datatype xsd:string ;
+        sh:datatype xsd:dateTime ;
         sh:minCount 1 ;
         sh:message "requestCreationTimestamp is required" ;
     ] .

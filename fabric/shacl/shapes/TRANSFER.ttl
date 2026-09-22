@@ -1,0 +1,48 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix fabric: <http://smartchaindb.org/fabric#> .
+
+fabric:TransferShape a sh:NodeShape ;
+    sh:targetClass fabric:TRANSFER ;
+    sh:property [
+        sh:path fabric:operation ;
+        sh:hasValue "TRANSFER" ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "operation must be TRANSFER" ;
+    ] ;
+    sh:property [
+        sh:path fabric:assetId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "assetId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:currentOwner ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "currentOwner is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:newOwner ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "newOwner is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:assetExists ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "asset must exist" ;
+    ] ;
+    sh:property [
+        sh:path fabric:ownerMatches ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "currentOwner must match on-chain owner" ;
+    ] ;
+    sh:property [
+        sh:path fabric:hasOpenAdvertisement ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue false ;
+        sh:message "asset has an active advertisement and cannot be transferred" ;
+    ] .

@@ -1,5 +1,8 @@
 type: object
 title: Transaction Schema - SELLER_ACCEPT_RETURN specific properties
+# Envelope only. All metadata field constraints (seller_public_key,
+# acceptance_timestamp, refund_details, processing_notes) and the required
+# request_return_id inside asset.data are enforced by SELLER_ACCEPT_RETURN.ttl.
 required:
 - asset
 - metadata
@@ -9,50 +12,18 @@ properties:
     type: object
     additionalProperties: false
     properties:
+      id:
+        "$ref": "#/definitions/sha3_hexdigest"
       data:
-        type: object
-        additionalProperties: false
-        properties:
-          id:
-            "$ref": "#/definitions/sha3_hexdigest"
-          request_return_id:
-            "$ref": "#/definitions/sha3_hexdigest"
-        required:
-        - id
-        - request_return_id
+        anyOf:
+          - type: object
+            additionalProperties: true
+          - type: "null"
     required:
-    - data
+    - id
   metadata:
-    required:
-    - seller_public_key
-    - acceptance_timestamp
-    - refund_details
-    - processing_notes
-    properties:
-      seller_public_key:
-        "$ref": "#/definitions/base58"
-      acceptance_timestamp:
-        type: string
-        format: "date-time"
-      refund_details:
-        type: object
-        required:
-        - refund_amount
-        - refund_currency
-        - refund_method
-        properties:
-          refund_amount:
-            type: number
-            minimum: 0
-          refund_currency:
-            type: string
-            minLength: 1
-          refund_method:
-            type: string
-            description: "Method used for refund (e.g., bank transfer, escrow return)"
-      processing_notes:
-        type: string
-        description: "Notes about the return processing"
+    type: object
+    additionalProperties: true
   inputs:
     type: array
     minItems: 1

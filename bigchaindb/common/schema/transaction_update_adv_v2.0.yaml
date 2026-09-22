@@ -1,5 +1,7 @@
 type: object
 title: Transaction Schema - UPDATE_ADV specific properties
+# Envelope only. All metadata field constraints (status enum,
+# updater_public_key, price, expiry) are enforced by UPDATE_ADV.ttl.
 required:
   - asset
   - metadata
@@ -9,29 +11,17 @@ properties:
     type: object
     additionalProperties: false
     properties:
+      id:
+        "$ref": "#/definitions/sha3_hexdigest"
       data:
-        type: object
-        additionalProperties: false
-        properties:
-          id:
-            "$ref": "#/definitions/sha3_hexdigest"
-        required:
-          - id
+        anyOf:
+          - type: object
+            additionalProperties: true
+          - type: "null"
     required:
-      - data
+      - id
   metadata:
-    properties:
-      status:
-        type: string
-        enum: [OPEN, LOCKED, CLOSED]
-      updater_public_key:
-        "$ref": "#/definitions/base58"
-      price:
-        type: string
-        pattern: "^[0-9]{1,20}$"
-      expiry:
-        type: string
-        format: date-time
+    type: object
     additionalProperties: true
   inputs:
     type: array
@@ -106,4 +96,3 @@ definitions:
         type: array
         items:
           "$ref": "#/definitions/base58"
-

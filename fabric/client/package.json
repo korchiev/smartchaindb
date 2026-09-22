@@ -1,0 +1,20 @@
+{
+  "name": "fabric-shacl-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "enroll": "node enroll.js",
+    "smoke": "node smoke.js",
+    "workload": "node workload.js"
+  },
+  "dependencies": {
+    "fabric-ca-client": "^2.2.20",
+    "fabric-network": "^2.2.20",
+    "node-fetch": "^3.3.2",
+    "yargs": "^17.7.2"
+  }
+}
+

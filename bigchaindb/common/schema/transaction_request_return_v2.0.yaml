@@ -1,5 +1,9 @@
 type: object
 title: Transaction Schema - REQUEST_RETURN specific properties
+# Envelope only. sell_transaction_id inside asset.data and all metadata
+# field constraints (requester_public_key, return_reason,
+# return_request_timestamp, return_policy_details) are enforced by
+# REQUEST_RETURN.ttl.
 required:
 - asset
 - metadata
@@ -9,48 +13,18 @@ properties:
     type: object
     additionalProperties: false
     properties:
+      id:
+        "$ref": "#/definitions/sha3_hexdigest"
       data:
-        type: object
-        additionalProperties: false
-        properties:
-          id:
-            "$ref": "#/definitions/sha3_hexdigest"
-          sell_transaction_id:
-            "$ref": "#/definitions/sha3_hexdigest"
-        required:
-        - id
-        - sell_transaction_id
+        anyOf:
+          - type: object
+            additionalProperties: true
+          - type: "null"
     required:
-    - data
+    - id
   metadata:
-    required:
-    - requester_public_key
-    - return_reason
-    - return_request_timestamp
-    - return_policy_details
-    properties:
-      requester_public_key:
-        "$ref": "#/definitions/base58"
-      return_reason:
-        type: string
-        minLength: 1
-        description: "Reason for requesting return"
-      return_request_timestamp:
-        type: string
-        format: "date-time"
-      return_policy_details:
-        type: object
-        properties:
-          return_window_days:
-            type: integer
-            minimum: 0
-          return_conditions:
-            type: string
-            description: "Conditions that must be met for return"
-          return_status:
-            type: string
-            enum: ["PENDING", "APPROVED", "REJECTED", "COMPLETED"]
-            default: "PENDING"
+    type: object
+    additionalProperties: true
   inputs:
     type: array
     minItems: 1
@@ -67,8 +41,7 @@ definitions:
   input:
     type: object
     required:
-    - owners_before
-    - fulfillment
+    - fulfills
     properties:
       owners_before:
         type: array
@@ -78,4 +51,26 @@ definitions:
         type: string
         pattern: "^[a-zA-Z0-9_-]*$"
       fulfills:
-        type: "null"
+        # REQUEST_RETURN inputs may reference a prior SELL output or carry
+        # no fulfillment link. SHACL enforces the cross-tx rule that, when
+        # present, the referenced txid must equal asset.data.sell_transaction_id.
+        anyOf:
+          - type: "null"
+          - type: object
+            required:
+            - txid
+            - output
+            properties:
+              txid:
+                type: string
+              output:
+                type: integer
+          - type: object
+            required:
+            - transaction_id
+            - output_index
+            properties:
+              transaction_id:
+                type: string
+              output_index:
+                type: integer

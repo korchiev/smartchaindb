@@ -1,0 +1,61 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix fabric: <http://smartchaindb.org/fabric#> .
+
+fabric:AdvertisementShape a sh:NodeShape ;
+    sh:targetClass fabric:ADVERTISEMENT ;
+    sh:property [
+        sh:path fabric:operation ;
+        sh:hasValue "ADVERTISEMENT" ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "operation must be ADVERTISEMENT" ;
+    ] ;
+    sh:property [
+        sh:path fabric:advId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "advId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:assetId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "assetId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:advertiser ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "advertiser is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:price ;
+        sh:datatype xsd:string ;
+        sh:pattern "^[0-9]+(\\.[0-9]{1,2})?$" ;
+        sh:minCount 1 ;
+        sh:message "price must be a decimal string" ;
+    ] ;
+    sh:property [
+        sh:path fabric:status ;
+        sh:in ("OPEN" "LOCKED" "CLOSED") ;
+        sh:minCount 1 ;
+        sh:message "status must be OPEN, LOCKED, or CLOSED" ;
+    ] ;
+    sh:property [
+        sh:path fabric:assetExists ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "referenced asset must exist" ;
+    ] ;
+    sh:property [
+        sh:path fabric:advertiserIsOwner ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "advertiser must be the current owner" ;
+    ] ;
+    sh:property [
+        sh:path fabric:hasOpenAdvertisement ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue false ;
+        sh:message "asset already has an active advertisement" ;
+    ] .

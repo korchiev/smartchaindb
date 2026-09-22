@@ -987,8 +987,12 @@ class Transaction(object):
             if field not in metadata:
                 raise ValueError(f"`metadata` must contain '{field}'")
                 
-        # Validate offer amount
-        if metadata['offer_amount'] <= 0:
+        # Validate offer amount (numeric or digit string; SHACL owns the domain type)
+        try:
+            offer_amount = float(metadata['offer_amount'])
+        except (TypeError, ValueError):
+            raise ValueError("`offer_amount` must be positive")
+        if offer_amount <= 0:
             raise ValueError("`offer_amount` must be positive")
             
         # Validate offer expiry
@@ -1045,7 +1049,7 @@ class Transaction(object):
         (inputs, outputs) = cls.validate_buy_offer(inputs, asset_id, advertisement_id, metadata)
         return cls(
             cls.BUY_OFFER,
-            {"data": {"id": asset_id, "advertisement_id": advertisement_id}},
+            {"id": asset_id, "data": {"id": asset_id, "advertisement_id": advertisement_id}},
             inputs,
             outputs,
             metadata,
@@ -1085,8 +1089,12 @@ class Transaction(object):
             if field not in metadata:
                 raise ValueError(f"`metadata` must contain '{field}'")
                 
-        # Validate sale amount
-        if metadata['sale_amount'] <= 0:
+        # Validate sale amount (numeric or digit string; SHACL owns the domain type)
+        try:
+            sale_amount = float(metadata['sale_amount'])
+        except (TypeError, ValueError):
+            raise ValueError("`sale_amount` must be positive")
+        if sale_amount <= 0:
             raise ValueError("`sale_amount` must be positive")
             
         # Create outputs for the two atomic transfers:
@@ -1127,7 +1135,7 @@ class Transaction(object):
         (inputs, outputs) = cls.validate_sell(inputs, asset_id, buy_offer_id, metadata)
         return cls(
             cls.SELL,
-            {"data": {"id": asset_id, "buy_offer_id": buy_offer_id}},
+            {"id": asset_id, "data": {"id": asset_id, "buy_offer_id": buy_offer_id}},
             inputs,
             outputs,
             metadata,
@@ -1150,7 +1158,13 @@ class Transaction(object):
         if metadata is None:
             metadata = {}
         (inputs, outputs) = cls.validate_update_adv(inputs, advertisement_id, metadata)
-        return cls('UPDATE_ADV', {"data": {"id": advertisement_id}}, inputs, outputs, metadata)
+        return cls(
+            cls.UPDATE_ADV,
+            {"id": advertisement_id, "data": {"id": advertisement_id}},
+            inputs,
+            outputs,
+            metadata,
+        )
 
     @classmethod
     def validate_request_return(cls, inputs, asset_id, sell_transaction_id, metadata):
@@ -1223,7 +1237,8 @@ class Transaction(object):
             metadata['return_policy_details']['return_status'] = 'PENDING'
             
         (inputs, outputs) = cls.validate_request_return(inputs, asset_id, sell_transaction_id, metadata)
-        return cls(cls.REQUEST_RETURN, {"id": asset_id, "sell_transaction_id": sell_transaction_id}, inputs, outputs, metadata)
+        # REQUEST_RETURN asset structure: {"id": asset_id, "data": {"id": asset_id, "sell_transaction_id": sell_transaction_id}}
+        return cls(cls.REQUEST_RETURN, {"id": asset_id, "data": {"id": asset_id, "sell_transaction_id": sell_transaction_id}}, inputs, outputs, metadata)
 
     @classmethod
     def validate_accept_return(cls, inputs, asset_id, request_return_id, metadata):
@@ -1296,6 +1311,47 @@ class Transaction(object):
             
         (inputs, outputs) = cls.validate_accept_return(inputs, asset_id, request_return_id, metadata)
         return cls(cls.ACCEPT_RETURN, {"id": asset_id, "request_return_id": request_return_id}, inputs, outputs, metadata)
+
+    @classmethod
+    def validate_seller_accept_return(cls, inputs, asset_id, request_return_id, metadata):
+        """Validate SELLER_ACCEPT_RETURN inputs and metadata against constructor rules."""
+        if not isinstance(inputs, list):
+            raise TypeError("`inputs` must be a list instance")
+        if len(inputs) != 1:
+            raise ValueError("`inputs` must contain exactly one item for seller accept return")
+        if not isinstance(asset_id, str):
+            raise TypeError("`asset_id` must be a string")
+        if not isinstance(request_return_id, str):
+            raise TypeError("`request_return_id` must be a string")
+        if not isinstance(metadata, dict):
+            raise TypeError("`metadata` must be a dict")
+
+        required_fields = ["seller_public_key", "acceptance_timestamp", "refund_details"]
+        for field in required_fields:
+            if field not in metadata:
+                raise ValueError(f"`metadata` must contain '{field}' field")
+        if not isinstance(metadata["refund_details"], dict):
+            raise ValueError("`refund_details` must be a dict")
+        for field in ("refund_amount", "refund_currency", "refund_method"):
+            if field not in metadata["refund_details"]:
+                raise ValueError(f"`refund_details` must contain '{field}' field")
+        return (deepcopy(inputs), [])
+
+    @classmethod
+    def seller_accept_return(cls, inputs, asset_id, request_return_id, metadata=None):
+        """Generate a `SELLER_ACCEPT_RETURN` transaction."""
+        if metadata is None:
+            metadata = {}
+        (inputs, outputs) = cls.validate_seller_accept_return(
+            inputs, asset_id, request_return_id, metadata
+        )
+        return cls(
+            cls.SELLER_ACCEPT_RETURN,
+            {"id": asset_id, "data": {"id": asset_id, "request_return_id": request_return_id}},
+            inputs,
+            outputs,
+            metadata,
+        )
 
     def __eq__(self, other):
         try:

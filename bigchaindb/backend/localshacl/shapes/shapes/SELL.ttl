@@ -4,7 +4,7 @@
 
 # SELL Transaction Shape
 bdb:SellTransactionShape a sh:NodeShape ;
-    sh:targetClass bdb:SellTransaction ;
+    sh:targetClass bdb:SELLTransaction ;
     sh:property [
         sh:path bdb:operation ;
         sh:hasValue "SELL" ;
@@ -110,7 +110,7 @@ bdb:SellMetadataShape a sh:NodeShape ;
     ] ;
     sh:property [
         sh:path bdb:requestCreationTimestamp ;
-        sh:datatype xsd:string ;
+        sh:datatype xsd:dateTime ;
         sh:message "requestCreationTimestamp can be provided" ;
     ] ;
     sh:property [

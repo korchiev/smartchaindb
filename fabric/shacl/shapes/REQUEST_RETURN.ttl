@@ -1,0 +1,48 @@
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix fabric: <http://smartchaindb.org/fabric#> .
+
+fabric:RequestReturnShape a sh:NodeShape ;
+    sh:targetClass fabric:REQUEST_RETURN ;
+    sh:property [
+        sh:path fabric:operation ;
+        sh:hasValue "REQUEST_RETURN" ;
+        sh:minCount 1 ; sh:maxCount 1 ;
+        sh:message "operation must be REQUEST_RETURN" ;
+    ] ;
+    sh:property [
+        sh:path fabric:requestId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "requestId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:sellId ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "sellId is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:requester ;
+        sh:datatype xsd:string ; sh:minLength 1 ;
+        sh:minCount 1 ;
+        sh:message "requester is required" ;
+    ] ;
+    sh:property [
+        sh:path fabric:saleExists ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "sale must exist" ;
+    ] ;
+    sh:property [
+        sh:path fabric:requesterIsBuyer ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue true ;
+        sh:message "only the buyer can request a return" ;
+    ] ;
+    sh:property [
+        sh:path fabric:returnAlreadyExists ;
+        sh:datatype xsd:boolean ;
+        sh:hasValue false ;
+        sh:message "a return request already exists for this sale" ;
+    ] .

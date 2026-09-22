@@ -3,18 +3,19 @@ FROM python:${python_version}
 LABEL maintainer "devs@bigchaindb.com"
 
 RUN apt-get update \
-    && apt-get install -y vim \
+    && apt-get install -y --no-install-recommends gcc g++ \
     && pip install -U pip \
     && pip install pynacl \
-    && apt-get autoremove \
-    && apt-get clean
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 ARG backend
 ARG abci_status
 
-# When developing with Python in a docker container, we are using PYTHONBUFFERED
-# to force stdin, stdout and stderr to be totally unbuffered and to capture logs/outputs
 ENV PYTHONUNBUFFERED 0
+ENV PIP_DEFAULT_TIMEOUT=180
+ENV PIP_RETRIES=15
 
 ENV BIGCHAINDB_DATABASE_PORT 27017
 ENV BIGCHAINDB_DATABASE_BACKEND $backend
@@ -32,5 +33,6 @@ ENV BIGCHAINDB_CI_ABCI ${abci_status}
 RUN mkdir -p /usr/src/app
 COPY . /usr/src/app/
 WORKDIR /usr/src/app
-RUN pip install -e .[dev]
+# Runtime extras only. `[dev]` pulls Sphinx/pytest and was dying on PyPI timeouts.
+RUN pip install --retries 15 --default-timeout=180 -e .
 RUN bigchaindb -l INFO -y configure

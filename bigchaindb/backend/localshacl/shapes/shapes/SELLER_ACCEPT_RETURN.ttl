@@ -4,7 +4,7 @@
 
 # SELLER_ACCEPT_RETURN Transaction Shape
 bdb:SellerAcceptReturnTransactionShape a sh:NodeShape ;
-    sh:targetClass bdb:SellerAcceptReturnTransaction ;
+    sh:targetClass bdb:SELLER_ACCEPT_RETURNTransaction ;
     sh:property [
         sh:path bdb:operation ;
         sh:hasValue "SELLER_ACCEPT_RETURN" ;

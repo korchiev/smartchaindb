@@ -107,9 +107,9 @@ class TransactionListApi(Resource):
 
         log_metric(
             "received_tx",
-            tx["metadata"]["requestCreationTimestamp"],
-            tx["operation"],
-            tx["id"],
+            (tx.get("metadata") or {}).get("requestCreationTimestamp"),
+            tx.get("operation"),
+            tx.get("id"),
             None
         )
 
@@ -131,7 +131,7 @@ class TransactionListApi(Resource):
             else:
                 log_metric(
                     "before_tendermint",
-                    tx_obj.metadata["requestCreationTimestamp"],
+                    (tx_obj.metadata or {}).get("requestCreationTimestamp"),
                     tx_obj.operation,
                     tx_obj._id,
                     None
