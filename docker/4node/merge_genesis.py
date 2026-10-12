@@ -48,14 +48,33 @@ def main():
         with open(cfg_toml, "w") as f:
             f.write(toml)
 
+    hosts = {}
+    hosts_path = os.path.join(ROOT, "hosts.map")
+    if os.path.exists(hosts_path):
+        with open(hosts_path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                idx, ip = line.split()
+                hosts[int(idx)] = ip
+
     lines = []
     for i in range(1, 5):
         peers = []
         for j in range(1, 5):
             if i == j:
                 continue
-            peers.append("%s@tm%d:26656" % (ids[j - 1], j))
+            if hosts:
+                dial = "%s:26656" % hosts[j]
+            else:
+                dial = "tm%d:26656" % j
+            peers.append("%s@%s" % (ids[j - 1], dial))
         lines.append("TM%d_PEERS=%s" % (i, ",".join(peers)))
+        if hosts:
+            env_path = os.path.join(ROOT, "n%d" % i, "node.env")
+            with open(env_path, "w") as f:
+                f.write("TM_PEERS=%s\nTM_EXTERNAL=%s:26656\n" % (",".join(peers), hosts[i]))
     with open(os.path.join(ROOT, "peers.env"), "w") as f:
         f.write("\n".join(lines) + "\n")
 
