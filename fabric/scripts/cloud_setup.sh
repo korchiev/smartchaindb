@@ -9,8 +9,10 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq jq curl git build-essential >/dev/null
 
+# Fabric 2.5 peers cannot build Go chaincode against Docker 29 ("unexpected EOF").
 if ! command -v docker >/dev/null; then
-  curl -fsSL https://get.docker.com | sh
+  curl -fsSL https://get.docker.com | sh -s -- --version 27.5.1
+  apt-mark hold docker-ce docker-ce-cli
 fi
 if ! command -v go >/dev/null; then
   curl -fsSL https://go.dev/dl/go1.22.12.linux-amd64.tar.gz | tar -C /usr/local -xz
