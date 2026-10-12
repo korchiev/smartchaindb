@@ -19,6 +19,14 @@ function run(fn, payload, expectCode = 0) {
   });
 }
 
+async function timed(fn, payload, expectCode = 0) {
+  const t0 = Date.now();
+  await run(fn, payload, expectCode);
+  const ms = Date.now() - t0;
+  console.log(`TIME ${fn} ${ms} ms`);
+  return ms;
+}
+
 async function main() {
   const owner = 'org1User';
   const buyer = 'org2User';
@@ -30,22 +38,33 @@ async function main() {
   const acceptId = `acc_${suffix}`;
 
   console.log(`Smoke lifecycle id=${suffix} SHACL=${USE_SHACL}`);
-  await run('CreateAsset', { assetId, owner, description: 'smoke asset' });
-  await run('CreateAdvertisement', { advId, assetId, advertiser: owner, price: '100' });
-  await run('UpdateAdvertisement', { advId, updater: owner, nextStatus: 'OPEN', price: '99' });
-  await run('SubmitBuyOffer', { offerId, advId, buyer, amount: '100' });
-  await run('Sell', { sellId, offerId, seller: owner });
-  await run('RequestReturn', { requestId, sellId, requester: buyer, reason: 'smoke return' });
-  await run('SellerAcceptReturn', { acceptId, requestId, seller: owner });
+  const times = [];
+  times.push(['CreateAsset', await timed('CreateAsset', { assetId, owner, description: 'smoke asset' })]);
+  times.push(['CreateAdvertisement', await timed('CreateAdvertisement', { advId, assetId, advertiser: owner, price: '100' })]);
+  times.push(['UpdateAdvertisement', await timed('UpdateAdvertisement', { advId, updater: owner, nextStatus: 'OPEN', price: '99' })]);
+  times.push(['SubmitBuyOffer', await timed('SubmitBuyOffer', { offerId, advId, buyer, amount: '100' })]);
+  times.push(['Sell', await timed('Sell', { sellId, offerId, seller: owner })]);
+  times.push(['RequestReturn', await timed('RequestReturn', { requestId, sellId, requester: buyer, reason: 'smoke return' })]);
+  times.push(['SellerAcceptReturn', await timed('SellerAcceptReturn', { acceptId, requestId, seller: owner })]);
 
   if (USE_SHACL) {
     console.log('Expect SHACL reject: advertise an asset the caller does not own');
-    await run(
-      'CreateAdvertisement',
-      { advId: `adv_bad_${suffix}`, assetId, advertiser: buyer, price: '1' },
-      2,
-    );
+    times.push([
+      'CreateAdvertisement(reject)',
+      await timed(
+        'CreateAdvertisement',
+        { advId: `adv_bad_${suffix}`, assetId, advertiser: buyer, price: '1' },
+        2,
+      ),
+    ]);
   }
+  console.log('TIMES');
+  let total = 0;
+  for (const [label, ms] of times) {
+    console.log(`  ${label} ${ms} ms`);
+    total += ms;
+  }
+  console.log(`  TOTAL ${total} ms`);
   console.log('SMOKE OK');
 }
 

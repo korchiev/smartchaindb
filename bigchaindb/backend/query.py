@@ -524,6 +524,16 @@ def get_advertisements_by_asset(conn, asset_id):
 
 
 @singledispatch
+def get_update_adv_ids_for_advertisement(conn, advertisement_id):
+    """Return UPDATE_ADV transaction ids for an advertisement, in store order.
+
+    Status lives on UPDATE_ADV metadata, not on the original ADVERTISEMENT
+    document. Callers overlay these onto the original status.
+    """
+    raise NotImplementedError
+
+
+@singledispatch
 def get_open_advertisements_by_asset(conn, asset_id):
     """Get all OPEN advertisements for a specific asset.
     

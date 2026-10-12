@@ -12,6 +12,7 @@ import threading
 import time
 from typing import Dict, Any, Tuple, List, Optional, Set
 from bigchaindb import config_utils
+from bigchaindb.common.shacl_delta import SHACLDeltaCache, dependency_ids, ConflictTable
 
 logger = logging.getLogger(__name__)
 
@@ -61,22 +62,51 @@ class SHACLValidatorClient:
         from bigchaindb import config
 
         shacl_config = config.get('shacl', {})
-        self.enabled = shacl_config.get('enabled', False)
-        self.endpoint = endpoint or shacl_config.get('endpoint', 'http://shacleng:3000')
+
+        def _as_bool(value, default):
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.strip().lower() in ("1", "true", "yes", "on")
+            return bool(value)
+
+        self.enabled = _bool_env(
+            'BIGCHAINDB_SHACL_ENABLED',
+            _as_bool(shacl_config.get('enabled'), True),
+        )
+        self.endpoint = (
+            endpoint
+            or os.environ.get('BIGCHAINDB_SHACL_ENDPOINT')
+            or shacl_config.get('endpoint', 'http://shacleng:3000')
+        )
         self.timeout = timeout or shacl_config.get('timeout', 5)
         self.fail_open = _bool_env(
             'BIGCHAINDB_SHACL_FAIL_OPEN',
-            shacl_config.get('fail_open', False),
+            _as_bool(shacl_config.get('fail_open'), False),
         )
         # Cached, lazily-populated set of shapes that the SHACL service reports
         # as loaded. Populated on first validate() call so the process can boot
         # even if the SHACL service is not yet up.
         self._loaded_shapes: Optional[Set[str]] = None
         self._shapes_lock = threading.Lock()
+        self.cache_enabled = _bool_env(
+            "BIGCHAINDB_SHACL_CACHE",
+            shacl_config.get("cache_enabled", True),
+        )
+        self.delta_cache = SHACLDeltaCache(
+            max_size=int(shacl_config.get("cache_max_size", 2048)),
+            ttl=shacl_config.get("cache_ttl"),
+        )
+        self.conflict_table = ConflictTable()
 
         if self.enabled:
             mode = "fail-open" if self.fail_open else "fail-closed"
-            logger.info(f"SHACL validation enabled ({mode}), endpoint: {self.endpoint}")
+            cache = "SHACL+Δ" if self.cache_enabled else "no-cache"
+            logger.info(
+                f"SHACL validation enabled ({mode}, {cache}), endpoint: {self.endpoint}"
+            )
 
     def _fail(self, message: str) -> Tuple[bool, List[Dict[str, Any]]]:
         """Return the correct (conforms, results) tuple for the configured fail policy."""
@@ -142,7 +172,19 @@ class SHACLValidatorClient:
         with self._shapes_lock:
             self._loaded_shapes = None
     
-    def validate_transaction(self, tx_dict: Dict[str, Any], requestCreationTimestamp: Optional[str] = None) -> Tuple[bool, List[Dict[str, Any]]]:
+    def on_tx_committed(self, tx_dict: Dict[str, Any]) -> int:
+        """Drop cached verdicts and abort in-flight validations that share deps."""
+        self.conflict_table.on_tx_committed(tx_dict)
+        if not self.cache_enabled:
+            return 0
+        return self.delta_cache.on_tx_committed(tx_dict)
+
+    def validate_transaction(
+        self,
+        tx_dict: Dict[str, Any],
+        requestCreationTimestamp: Optional[str] = None,
+        dep_state_hash: Optional[str] = None,
+    ) -> Tuple[bool, List[Dict[str, Any]]]:
         """
         Validate a transaction against SHACL shapes.
         
@@ -166,13 +208,29 @@ class SHACLValidatorClient:
 
         tx_id = tx_dict.get('id', 'unknown')
 
+        if self.cache_enabled and dep_state_hash is not None:
+            cached = self.delta_cache.get(tx_id, dep_state_hash)
+            if cached is not None:
+                logger.debug(
+                    "SHACL+Δ hit for %s %s dep=%s",
+                    operation,
+                    tx_id,
+                    dep_state_hash[:12],
+                )
+                return cached
+
         # Startup coverage check: verify the SHACL service actually has a shape
         # loaded for this operation before we spend time serializing RDF.
         ok, fail_response = self._ensure_shape_coverage(operation)
         if not ok:
             return fail_response
 
+        self.conflict_table.begin(tx_id, dependency_ids(tx_dict))
         try:
+            reason = self.conflict_table.abort_if_changed(tx_id)
+            if reason:
+                return self._fail("SHACL+Δ conflict: {}".format(reason))
+
             # Convert transaction to Turtle RDF format (with timing)
             conversion_start = time.time()
             turtle_data = self._convert_to_turtle(tx_dict)
@@ -231,6 +289,19 @@ class SHACLValidatorClient:
                         logger.debug(f"  - {error.get('message', 'Unknown error')}")
                 else:
                     logger.debug(f"SHACL validation passed for {operation} transaction")
+
+                reason = self.conflict_table.abort_if_changed(tx_id)
+                if reason:
+                    return self._fail("SHACL+Δ conflict: {}".format(reason))
+
+                if self.cache_enabled and dep_state_hash is not None:
+                    self.delta_cache.put(
+                        tx_id,
+                        dep_state_hash,
+                        conforms,
+                        results,
+                        dependency_ids(tx_dict),
+                    )
                 
                 return conforms, results
             
@@ -266,6 +337,8 @@ class SHACLValidatorClient:
         except Exception as e:
             logger.error(f"SHACL validation error: {e}", exc_info=True)
             return self._fail(f"Unexpected SHACL validation error: {e}")
+        finally:
+            self.conflict_table.end(tx_id)
     
     def _convert_to_turtle(self, tx_dict: Dict[str, Any]) -> str:
         """

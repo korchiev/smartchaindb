@@ -8,6 +8,7 @@ from bigchaindb.common.exceptions import InvalidSignature, DuplicateTransaction,
 from bigchaindb.common.schema import validate_transaction_schema
 from bigchaindb.common.transaction import Transaction
 from bigchaindb.common.utils import validate_txn_obj, validate_key
+from bigchaindb.common.shacl_delta import compute_dep_state_hash
 from bigchaindb.common.shacl_validator import get_shacl_validator
 import logging
 
@@ -20,48 +21,31 @@ class Transaction(Transaction):
     DATA = "data"
 
     def validate(self, bigchain, current_transactions=[]):
+        """Validate a transaction.
+
+        Direct (SHACL off): JSON envelope already checked at parse time, then
+        native signature + marketplace state rules in this process.
+
+        SHACL / SHACL+Δ (SHACL on): the microservice is authoritative for
+        domain rules. Δ reuses a verdict when dependency *values* match.
         """
-        Validate transaction using SHACL validation service.
-        
-        All validation logic (syntactic, semantic, and state consistency)
-        is now handled by the SHACL microservice using declarative constraints.
-        
-        Args:
-            bigchain (BigchainDB): an instantiated bigchaindb.BigchainDB object.
-            current_transactions: list of transactions in current block
-            
-        Returns:
-            The transaction (Transaction) if valid
-            
-        Raises:
-            ValidationError: If SHACL validation fails
-            DuplicateTransaction: If transaction already exists
-        """
-        
-        # ═══════════════════════════════════════════════════════════════
-        # Check for duplicates in current block or database
-        # ═══════════════════════════════════════════════════════════════
         duplicates = any(txn for txn in current_transactions if txn.id == self.id)
         if bigchain.is_committed(self.id) or duplicates:
             raise DuplicateTransaction(
                 "transaction `{}` already exists".format(self.id)
             )
-        
-        # ═══════════════════════════════════════════════════════════════
-        # SHACL VALIDATION - ALL-IN-ONE
-        # Handles: syntactic, semantic, and state consistency
-        # ═══════════════════════════════════════════════════════════════
+
         shacl_validator = get_shacl_validator()
-        
         if not shacl_validator.enabled:
-            raise ValidationError(
-                "SHACL validation is disabled. "
-                "Set BIGCHAINDB_SHACL_ENABLED=true to enable validation."
-            )
+            return self._validate_direct(bigchain, current_transactions)
         
         logger.debug(f"Validating {self.operation} transaction {self.id} via SHACL")
         
-        conforms, results = shacl_validator.validate_transaction(self.to_dict())
+        tx_dict = self.to_dict()
+        dep_hash = compute_dep_state_hash(bigchain, tx_dict)
+        conforms, results = shacl_validator.validate_transaction(
+            tx_dict, dep_state_hash=dep_hash
+        )
         
         if not conforms:
             # Extract error messages from SHACL results
@@ -88,8 +72,94 @@ class Transaction(Transaction):
             raise ValidationError(f"SHACL validation failed: {error_summary}")
         
         logger.info(f"✓ SHACL validation passed for {self.operation} transaction {self.id}")
-        
         return self
+
+    def _validate_direct(self, bigchain, current_transactions=[]):
+        """Imperative baseline: signatures + existing marketplace state checks."""
+        op = self.operation
+        try:
+            if op == self.TRANSFER:
+                self.validate_transfer_inputs(bigchain, current_transactions)
+            elif op == self.ADVERTISEMENT:
+                self.validate_advertisement_inputs(bigchain, current_transactions)
+            elif op == self.BUY_OFFER:
+                self.validate_buy_offer_inputs(bigchain, current_transactions)
+            elif op == self.SELL:
+                self.validate_sell_inputs(bigchain, current_transactions)
+                input_conditions = []
+                for input_ in self.inputs:
+                    if getattr(input_, "fulfills", None) is None:
+                        continue
+                    src = bigchain.get_transaction(input_.fulfills.txid)
+                    if src is not None:
+                        input_conditions.append(src.outputs[input_.fulfills.output])
+                if input_conditions and not self.inputs_valid(input_conditions):
+                    raise InvalidSignature("Transaction signature is invalid.")
+            elif op == self.UPDATE_ADV:
+                self._validate_update_adv_direct(bigchain)
+            elif op == self.REQUEST_RETURN:
+                self._validate_request_return_direct(bigchain)
+            elif op == self.SELLER_ACCEPT_RETURN:
+                self._validate_seller_accept_return_direct(bigchain)
+            elif op == self.INTEREST:
+                self.validate_interest(bigchain, current_transactions)
+            elif op == self.REQUEST_FOR_QUOTE:
+                self.validate_rfq(bigchain, current_transactions)
+            elif op == self.BID:
+                self.validate_bid(bigchain, current_transactions)
+            elif op == self.ACCEPT:
+                self.validate_accept(bigchain, current_transactions)
+            elif op == self.RETURN:
+                self.validate_return(bigchain, current_transactions)
+            else:
+                if not self.inputs_valid([], bigchain):
+                    raise InvalidSignature("Transaction signature is invalid.")
+        except (ValueError, TypeError) as exc:
+            raise ValidationError(str(exc))
+        logger.info("Direct validation passed for %s transaction %s", op, self.id)
+        return self
+
+    def _asset_parts(self):
+        asset = self.asset or {}
+        data = asset.get("data") if isinstance(asset.get("data"), dict) else {}
+        return asset, data
+
+    def _validate_update_adv_direct(self, bigchain):
+        asset, data = self._asset_parts()
+        adv_id = data.get("id") or asset.get("id")
+        adv = bigchain.get_transaction(adv_id) if adv_id else None
+        if adv is None:
+            raise ValidationError("UPDATE_ADV advertisement does not exist")
+        meta = self.metadata or {}
+        updater = meta.get("updater_public_key")
+        advertiser = (adv.metadata or {}).get("advertiser_public_key")
+        if updater and advertiser and updater != advertiser:
+            raise ValidationError("updater must be the advertiser")
+        status = meta.get("status")
+        if status and status not in ("OPEN", "LOCKED", "CLOSED"):
+            raise ValidationError("advertisement status must be OPEN, LOCKED, or CLOSED")
+
+    def _validate_request_return_direct(self, bigchain):
+        asset, data = self._asset_parts()
+        sell_id = data.get("sell_transaction_id") or asset.get("sell_transaction_id")
+        sell_tx = bigchain.get_transaction(sell_id) if sell_id else None
+        if sell_tx is None:
+            raise ValidationError("REQUEST_RETURN sell transaction does not exist")
+        if getattr(sell_tx, "operation", None) != self.SELL:
+            raise ValidationError("referenced transaction is not a SELL")
+        requester = (self.metadata or {}).get("requester_public_key")
+        buyer = (sell_tx.metadata or {}).get("buyer_public_key")
+        if requester and buyer and requester != buyer:
+            raise ValidationError("requester must be the buyer from the sell")
+
+    def _validate_seller_accept_return_direct(self, bigchain):
+        asset, data = self._asset_parts()
+        req_id = data.get("request_return_id") or asset.get("request_return_id")
+        req_tx = bigchain.get_transaction(req_id) if req_id else None
+        if req_tx is None:
+            raise ValidationError("SELLER_ACCEPT_RETURN request does not exist")
+        if getattr(req_tx, "operation", None) != self.REQUEST_RETURN:
+            raise ValidationError("referenced transaction is not a REQUEST_RETURN")
 
     @classmethod
     def from_dict(cls, tx_body):

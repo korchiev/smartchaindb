@@ -43,8 +43,10 @@ def wait_api():
 
 
 def post(tx, label):
+    t0 = time.perf_counter()
     resp = requests.post(API + "?mode=commit", json=tx.to_dict(), timeout=45)
-    print("POST", label, resp.status_code)
+    ms = (time.perf_counter() - t0) * 1000
+    print("POST", label, resp.status_code, "{:.1f} ms".format(ms))
     print(resp.text[:800])
     if resp.status_code >= 400:
         raise SystemExit(1)
@@ -53,7 +55,7 @@ def post(tx, label):
     print("GET ", label, got.status_code, got.json().get("operation"), txid)
     if got.status_code != 200:
         raise SystemExit(1)
-    return txid
+    return txid, ms
 
 
 wait_api()
@@ -72,7 +74,7 @@ create_tx = Transaction.create(
         "capabilityParameters": {"p": "1"},
     },
 ).sign([seller.private_key])
-create_id = post(create_tx, "CREATE")
+create_id, create_ms = post(create_tx, "CREATE")
 
 adv_tx = Transaction.advertisement(
     inputs=gen_input(seller.public_key),
@@ -87,7 +89,7 @@ adv_tx = Transaction.advertisement(
         "requestCreationTimestamp": iso(NOW),
     },
 ).sign([seller.private_key])
-adv_id = post(adv_tx, "ADVERTISEMENT")
+adv_id, adv_ms = post(adv_tx, "ADVERTISEMENT")
 
 upd_tx = Transaction.update_adv(
     inputs=gen_input(seller.public_key),
@@ -100,7 +102,7 @@ upd_tx = Transaction.update_adv(
         "requestCreationTimestamp": iso(NOW),
     },
 ).sign([seller.private_key])
-upd_id = post(upd_tx, "UPDATE_ADV")
+upd_id, upd_ms = post(upd_tx, "UPDATE_ADV")
 
 offer_tx = Transaction.buy_offer(
     inputs=gen_input(buyer.public_key),
@@ -116,7 +118,7 @@ offer_tx = Transaction.buy_offer(
         "requestCreationTimestamp": iso(NOW),
     },
 ).sign([buyer.private_key])
-offer_id = post(offer_tx, "BUY_OFFER")
+offer_id, offer_ms = post(offer_tx, "BUY_OFFER")
 
 sell_tx = Transaction.sell(
     inputs=create_tx.to_inputs(),
@@ -132,7 +134,7 @@ sell_tx = Transaction.sell(
         "requestCreationTimestamp": iso(NOW),
     },
 ).sign([seller.private_key])
-sell_id = post(sell_tx, "SELL")
+sell_id, sell_ms = post(sell_tx, "SELL")
 
 ret_tx = Transaction.request_return(
     inputs=gen_input(buyer.public_key),
@@ -150,7 +152,7 @@ ret_tx = Transaction.request_return(
         "requestCreationTimestamp": iso(NOW),
     },
 ).sign([buyer.private_key])
-ret_id = post(ret_tx, "REQUEST_RETURN")
+ret_id, ret_ms = post(ret_tx, "REQUEST_RETURN")
 
 acc_tx = Transaction.seller_accept_return(
     inputs=gen_input(seller.public_key),
@@ -168,8 +170,17 @@ acc_tx = Transaction.seller_accept_return(
         },
     },
 ).sign([seller.private_key])
-acc_id = post(acc_tx, "SELLER_ACCEPT_RETURN")
+acc_id, acc_ms = post(acc_tx, "SELLER_ACCEPT_RETURN")
 
+times = [
+    ("CREATE", create_ms),
+    ("ADVERTISEMENT", adv_ms),
+    ("UPDATE_ADV", upd_ms),
+    ("BUY_OFFER", offer_ms),
+    ("SELL", sell_ms),
+    ("REQUEST_RETURN", ret_ms),
+    ("SELLER_ACCEPT_RETURN", acc_ms),
+]
 print("WORKFLOW OK")
 print("CREATE", create_id)
 print("ADVERTISEMENT", adv_id)
@@ -178,3 +189,7 @@ print("BUY_OFFER", offer_id)
 print("SELL", sell_id)
 print("REQUEST_RETURN", ret_id)
 print("SELLER_ACCEPT_RETURN", acc_id)
+print("TIMES")
+for label, ms in times:
+    print("  {} {:.1f} ms".format(label, ms))
+print("  TOTAL {:.1f} ms".format(sum(ms for _, ms in times)))

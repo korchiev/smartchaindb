@@ -127,6 +127,10 @@ def get_txids_filtered(conn, asset_id, operation=None, last_tx=None):
         Transaction.CREATE: {"operation": "CREATE", "id": asset_id},
         Transaction.TRANSFER: {"operation": "TRANSFER", "asset.id": asset_id},
         Transaction.ADVERTISEMENT: {"operation": "ADVERTISEMENT", "asset.id": asset_id},
+        Transaction.UPDATE_ADV: {
+            "operation": "UPDATE_ADV",
+            "$or": [{"asset.id": asset_id}, {"asset.data.id": asset_id}],
+        },
         Transaction.BUY_OFFER: {"operation": "BUY_OFFER", "asset.id": asset_id},
         Transaction.SELL: {"operation": "SELL", "asset.id": asset_id},
         Transaction.REQUEST_RETURN: {"operation": "REQUEST_RETURN", "asset.id": asset_id},
@@ -268,6 +272,23 @@ def get_advertisements_by_asset(conn, asset_id):
     }
     cursor = conn.run(conn.collection("transactions").find(query))
     return cursor
+
+
+@register_query(LocalMongoDBConnection)
+def get_update_adv_ids_for_advertisement(conn, advertisement_id):
+    query = {
+        "operation": "UPDATE_ADV",
+        "$or": [
+            {"asset.id": advertisement_id},
+            {"asset.data.id": advertisement_id},
+        ],
+    }
+    cursor = conn.run(
+        conn.collection("transactions")
+        .find(query, {"id": 1, "_id": 1})
+        .sort([("_id", 1)])
+    )
+    return [elem["id"] for elem in cursor]
 
 
 @register_query(LocalMongoDBConnection)

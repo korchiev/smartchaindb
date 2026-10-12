@@ -1,0 +1,619 @@
+\documentclass[10pt,twocolumn]{article}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{times}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{caption}
+\usepackage{titlesec}
+\captionsetup{font=small,labelfont=bf,labelsep=colon,skip=4pt}
+\titleformat{\subsubsection}[runin]{\normalfont\itshape}{\thesubsubsection}{0.5em}{}[.]
+\titlespacing*{\subsubsection}{0pt}{1.2ex plus 0.5ex}{0.6em}
+\graphicspath{{../figures/}}
+\title{\vspace{-1.2em}Knowledge-Aware Blockchain Transaction Validation with SHACL:\\
+Evaluation Section (WWW~2027 draft)}
+\author{Anonymous Author(s)\vspace{-0.6em}}
+\date{Measured 7~October~2026 (latency and load); fail-closed re-measured 10~October~2026}
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+\setcounter{section}{4}
+\section{Evaluation}
+\label{sec:eval}
+
+\subsection{Evaluation Objectives and Scope}
+\label{sec:objectives}
+Our evaluation addresses whether declarative specifications of marketplace
+validation semantics can be enforced on the commit path of a permissioned
+ledger at a cost that is small relative to consensus, while remaining
+authoritative when the blockchain state those specifications depend upon
+changes. We specifically evaluate trade-offs between (1) imperative
+validation, where ownership, advertisement-status, and offer-linkage rules
+are embedded in engine code, and (2) declarative SHACL constraints, where
+the same rules are explicit, inspectable, and amenable to dependency-aware
+re-validation.
+
+\textbf{Evaluation criteria.} Given the inherent declarative overhead (RDF
+materialization, HTTP invocation of the constraint engine, and graph
+evaluation), we consider parity with the imperative Direct baseline within
+the consensus-dominated latency envelope a success, as the value proposition
+extends beyond validation speed to include: (1) inspectability and
+portability of the constraints themselves, (2) dependency-aware
+re-validation in which cached verdicts are reused only while the referenced
+state is unchanged, and (3) fail-closed rejection of semantically invalid
+transactions. We compare Direct, SHACL, and SHACL+$\Delta$ within
+SmartChainDB (BigchainDB on Tendermint) to isolate the impact of the
+validation paradigm from consensus differences, and we port the same shapes
+and treatments to Hyperledger Fabric~2.5 to assess whether the observed
+behavior is specific to one engine.
+
+The focus of our evaluation is not overall system throughput, as ledger
+throughput depends on consensus protocol, block parameters, network
+topology, and storage backend, which are outside our scope. Rather, we aim
+to understand the impact of the validation paradigm on per-transaction
+cost, on the commit-path latency envelope, and on correctness under state
+change. We therefore report within-engine comparisons and interpret the
+Fabric panel as a portability reference rather than as a cross-platform
+ranking.
+
+Our evaluation addresses four research questions:
+
+\textbf{RQ1: Declarative overhead and differential re-validation.} What is
+the per-transaction validation cost of SHACL relative to Direct, and under
+what conditions does SHACL+$\Delta$ reuse a cached verdict rather than
+re-executing constraint evaluation?
+
+\textbf{RQ2: End-to-end impact.} How do the three approaches compare in
+committed lifecycle latency, in the commit-latency distribution of
+contended offers, and in achieved throughput under closed-loop load, and
+what fraction of end-to-end time is attributable to validation?
+
+\textbf{RQ3: Fail-closed correctness.} Do SHACL and SHACL+$\Delta$ reject
+semantically invalid transactions (advertisements by a non-owner, offers
+against a closed advertisement) with the same outcomes as Direct, and does
+verdict caching preserve those outcomes when the referenced state changes?
+
+\textbf{RQ4: Portability.} Do the same shapes and treatments exhibit the
+same qualitative behavior on Hyperledger Fabric, whose execute--order--validate
+pipeline differs from Tendermint's order--execute model?
+
+\subsection{Experimental Setup}
+\label{sec:setup}
+
+\subsubsection{Hardware and Environment}
+All experiments were conducted on a single workstation running WSL2 with
+Docker Engine~27.5.1. Latency and load experiments use one SmartChainDB
+validator (Tendermint v0.31.5, MongoDB~3.6, one gunicorn worker) together
+with the SHACL constraint engine as a sidecar container. Fail-closed
+experiments were re-run on a four-validator LAN deployment (four Tendermint
+voting keys, four MongoDB/SHACL/BigchainDB replicas, full mesh with
+$n_{\mathrm{peers}}{=}3$). The Fabric deployment is the 2.5.12 test-network
+with two endorsing peers (one per organization), a single orderer, and Go
+marketplace chaincode. Table~\ref{tab:setup} summarizes the configurations.
+
+\begin{table}[t]
+\centering
+\caption{Deployments under test.}
+\label{tab:setup}
+\small
+\begin{tabular}{@{}llp{0.38\columnwidth}@{}}
+\toprule
+Engine & Topology & Validation path \\
+\midrule
+SmartChainDB & 1 validator (latency, load); 4 validators (fail-closed)
+  & HTTP $\to$ Direct/SHACL $\to$ CheckTx/DeliverTx \\
+Fabric 2.5.12 & 2 peers, 1 orderer
+  & client reads world state $\to$ SHACL $\to$ endorse/order/commit \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Implementations}
+We evaluate three implementations of identical marketplace transaction
+semantics on each engine.
+
+\textbf{Direct:} Imperative validation integrated in the engine
+(server-side Python methods in SmartChainDB; Go chaincode with MVCC
+version checks on Fabric). Validation logic is implemented procedurally
+within the platform rather than as declarative constraints. This serves as
+the baseline against which declarative overhead is measured.
+
+\textbf{SHACL:} Declarative validation without optimization. Each
+transaction is converted to RDF, merged with the referenced blockchain state
+(asset ownership, effective advertisement status, offer linkage), and
+validated against the shape repository over HTTP. Validation results are not
+cached; every validation phase re-executes constraint evaluation. The engine
+is fail-closed: a constraint violation or an unreachable engine rejects the
+transaction.
+
+\textbf{SHACL+$\Delta$:} SHACL validation with differential re-validation.
+Verdicts are cached under the key $\langle$tx-id, dependency-state
+hash$\rangle$, where the hash is computed over the \emph{values} of the
+referenced entities (current owner, effective advertisement status, offer
+state). A cached verdict is reused only if the recomputed hash matches;
+committed transactions invalidate reverse-indexed entries; and a conflict
+tracker may abort an in-flight validation if a dependency generation
+advances during the HTTP round-trip.
+
+All three treatments share the same client, the same transaction types, and
+the same state transitions on a given engine, differing only in how
+validation is specified and executed. On Fabric, SHACL and SHACL+$\Delta$
+are evaluated in the client before endorsement, and the $\Delta$ variant
+issues a second SHACL call against the same facts to emulate the
+re-validation that Tendermint performs natively in CheckTx.
+
+\subsubsection{Workload Design}
+\textbf{Goals.} (1) Exercise the end-to-end dependency structure among
+transaction types (owner $\to$ advertisement $\to$ offer $\to$ sale $\to$
+return); (2) control the position at which referenced state changes so that
+cache reuse, invalidation, and rejection can be attributed to specific
+operations; (3) support both validator-only timing and committed
+end-to-end timing; (4) support closed-loop load at several concurrency
+levels.
+
+\textbf{Transaction universe.} The framework supports seven marketplace
+transaction types (Create, Advertise, UpdateAdv, BuyOffer, Sell,
+RequestReturn, AcceptReturn). The full lifecycle experiment exercises all
+seven; the contention mixes and the load experiment use the Create,
+Advertise, UpdateAdv, and BuyOffer subset, which covers the dependency
+patterns central to SHACL+$\Delta$: asset creation, ownership checks,
+advertisement status, and offer linkage.
+
+\subsection{Workloads and Settings}
+\label{sec:workloads}
+\textbf{Datasets.} There is no public marketplace trace that carries the
+constraints under test; public token traces do not encode ``open
+advertisement'' or ``at most one return.'' We therefore use a synthetic
+generator that already exists on both backends. Each treatment commits on
+the order of $220$ transactions (Table~\ref{tab:n}); across Direct, SHACL,
+and SHACL+$\Delta$, SmartChainDB commits ${\approx}670$ marketplace
+transactions and Fabric repeats the same mixes (${\approx}600$ invokes).
+
+\textbf{Mixes.} \emph{Shared ad:} one \textsc{Open} advertisement and
+$n{=}20$ BuyOffers against it (identical referenced facts, distinct
+tx-ids). \emph{Mutating ad:} $n/2$ BuyOffers, then UpdateAdv to
+\textsc{Closed}, then $n/2$ further BuyOffers, so that the second half must
+be rejected. \emph{Disjoint:} $n{=}20$ independent
+Create$+$Advertise$+$BuyOffer chains as a control with no shared state.
+
+\textbf{Probes.} A \emph{stolen-advertisement} probe submits an Advertise
+whose advertiser is not among the Create owners. A \emph{conflict} probe
+submits $12$ concurrent BuyOffers while an UpdateAdv to \textsc{Closed}
+races them, exercising the conflict tracker.
+
+\textbf{Validator microbenchmark.} To isolate validation cost from
+consensus, one pending BuyOffer against a live \textsc{Open} advertisement
+is validated $n{=}20$ times in-process under each treatment, after which
+the advertisement is updated and the same offer is validated once more.
+These checks do not commit additional ledger transactions.
+
+\textbf{Load.} Closed-loop issuers post $N{=}16$ BuyOffers against one
+\textsc{Open} advertisement at concurrency $C\in\{1,2,4,8\}$; offered and
+achieved rates are $N$ divided by wall-clock time.
+
+\textbf{Clusters.} One validator for latency and load; four validators for
+fail-closed. Block parameters are held constant across treatments.
+
+\textbf{Reported metrics.} Validator latency (median, p95); committed
+latency (median, p95, min, max) and CDFs; cache hits, misses, and
+invalidations; reject rate; offered versus achieved throughput; and
+container CPU from \texttt{docker stats}.
+
+\begin{table}[t]
+\centering
+\caption{Committed marketplace transactions per treatment (SmartChainDB).
+The validator microbenchmark is in-process and excluded.}
+\label{tab:n}
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Experiment & Ledger txs & Repeats \\
+\midrule
+Validator setup (Create$+$Advertise) & 2 & $20$ checks of one offer \\
+Full lifecycle & $5\times 7=35$ & $n{=}5$ trials \\
+Shared ad & $2+20=22$ & --- \\
+Mutating ad & $23$ posted & $10$ expected rejects \\
+Disjoint & $20\times 3=60$ & --- \\
+Stolen-ad probe & $3$ posted & $1$ reject \\
+Conflict probe & $\le 15$ & $12$ concurrent offers \\
+Load & $2+4\times 16=66$ & $C\in\{1,2,4,8\}$ \\
+\midrule
+Approx.\ per treatment & ${\approx}223$ & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Experiment 1: Validation Cost and Differential Re-validation}
+\label{sec:exp1}
+
+\subsubsection{Methodology}
+We measure the validator alone, starting the clock when RDF conversion or
+SHACL evaluation begins and stopping it when the verdict is returned, so
+that Tendermint and Fabric commit paths are excluded. We then run the three
+contention mixes on the live ledger and record the SHACL+$\Delta$ cache
+counters after each mix.
+
+\subsubsection{Results: Validation Latency}
+Fig.~\ref{fig:val} plots validator latency for the four conditions on a
+logarithmic axis, and Table~\ref{tab:val} reports the summary statistics.
+On SmartChainDB, Direct RDF conversion takes $0.23$\,ms (median; p95
+$0.49$\,ms), a SHACL miss takes $13.3$\,ms (median; p95 $57.1$\,ms), and a
+SHACL+$\Delta$ hit takes $0.007$\,ms. After the referenced advertisement is
+updated, the next validation of the same pending offer misses and takes
+$12.3$\,ms. Fabric exhibits the same ordering at a higher base cost: a miss
+takes $26$\,ms, a hit under $1$\,ms, and a post-update miss $25$\,ms.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_validation_both.pdf}
+\caption{Validator latency for one pending BuyOffer ($n{=}20$).}
+\label{fig:val}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Validator latency for BuyOffer (ms).}
+\label{tab:val}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Condition & $n$ & Median & p95 & Max \\
+\midrule
+SmartChainDB Direct (RDF) & 20 & 0.23 & 0.49 & 0.57 \\
+SmartChainDB SHACL miss & 20 & 13.3 & 57.1 & 84.7 \\
+SmartChainDB SHACL+$\Delta$ hit & 20 & 0.007 & 0.008 & 0.009 \\
+SmartChainDB value-change miss & 1 & 12.3 & --- & --- \\
+Fabric SHACL miss & 20 & 26 & 35 & 36 \\
+Fabric SHACL+$\Delta$ hit & 20 & ${<}1$ & ${<}1$ & ${<}1$ \\
+Fabric value-change miss & 1 & 25 & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Overhead patterns.} The SHACL miss cost is dominated by fixed
+components (HTTP invocation, shape loading, and graph evaluation) rather
+than by the size of the transaction, which is why the median is stable at
+${\approx}13$\,ms while the tail reflects cold-engine effects on the first
+requests. The SHACL+$\Delta$ hit is a hash lookup on the dependency-state
+key and does not invoke the engine, which accounts for the three
+orders-of-magnitude gap between hit and miss. The post-update miss is the
+behavior the design requires: because the cache key is computed over the
+\emph{values} of the referenced entities, an UpdateAdv changes the key, and
+the stale verdict cannot be reused. Fabric's higher miss cost reflects an
+additional process boundary on the endorse path rather than a different
+rule set.
+
+\subsubsection{Results: Cache Events Across Mixes}
+Fig.~\ref{fig:hits} reports hits, misses, and invalidations for each mix.
+On SmartChainDB, the shared, mutating, and disjoint mixes record $20$, $21$,
+and $36$ misses respectively and no hits. This is a consequence of the
+cache key rather than of cache failure: every committed BuyOffer carries a
+fresh tx-id, so a stream of distinct offers cannot hit even when they
+reference identical state. Hits arise in the validator microbenchmark,
+where the \emph{same} pending transaction is re-validated, which is the
+pattern that CheckTx and the mempool produce in practice. The disjoint mix
+records more misses than offers because each independent advertisement
+contributes referenced state that is also hashed.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_hit_miss_invalidation.pdf}
+\caption{SHACL+$\Delta$ cache events by mix.}
+\label{fig:hits}
+\end{figure}
+
+On Fabric, where the client issues a second SHACL call against the same
+facts before endorsement, the shared and disjoint mixes record hits
+($20$ and $20$), and the mutating mix records invalidations when the
+advertisement is updated. The two panels therefore reflect the same
+re-validation rule under different call patterns, and should not be read
+as the cache succeeding on one engine and failing on the other.
+
+\subsection{Experiment 2: End-to-End Latency and Load}
+\label{sec:exp2}
+
+\subsubsection{Methodology}
+We execute the full seven-operation lifecycle on the live ledger ($n{=}5$
+trials per treatment), record the commit-latency distribution of the
+shared-advertisement mix, and drive closed-loop load at
+$C\in\{1,2,4,8\}$. For one trial we additionally decompose each BuyOffer
+into validation time and commit/network time.
+
+\subsubsection{Results: Full Lifecycle}
+Fig.~\ref{fig:e2e} and Table~\ref{tab:e2e} report the committed lifecycle.
+SmartChainDB medians are $1.55$\,s (Direct), $1.79$\,s (SHACL), and
+$2.48$\,s (SHACL+$\Delta$); Fabric medians are $14.5$\,s, $14.9$\,s, and
+$15.3$\,s. Across approaches, the three treatments occupy the same latency
+band on each engine, and the gap between engines (roughly an order of
+magnitude) is attributable to Fabric's endorse--order--commit pipeline
+rather than to validation. The per-operation decomposition
+(Fig.~\ref{fig:ops}--\ref{fig:where}) places the SHACL slice at
+${\approx}16$\,ms on a ${\approx}250$\,ms SmartChainDB commit, so
+validation accounts for a few percent of end-to-end time.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_e2e_both.pdf}
+\caption{Full marketplace lifecycle ($n{=}5$; whiskers are min--max).}
+\label{fig:e2e}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Full lifecycle, Create through AcceptReturn (s).}
+\label{tab:e2e}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Engine / treatment & Median & Mean & Min & Max \\
+\midrule
+SmartChainDB Direct & 1.55 & 1.82 & 1.33 & 2.94 \\
+SmartChainDB SHACL & 1.79 & 1.82 & 1.50 & 2.23 \\
+SmartChainDB SHACL+$\Delta$ & 2.48 & 2.57 & 1.51 & 3.70 \\
+Fabric Direct & 14.47 & 14.47 & 14.40 & 14.58 \\
+Fabric SHACL & 14.90 & 14.88 & 14.75 & 14.99 \\
+Fabric SHACL+$\Delta$ & 15.26 & 15.34 & 14.91 & 15.87 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig3_e2e_ops.pdf}
+\caption{Per-operation commit latency, SmartChainDB (one trial).}
+\label{fig:ops}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig4_where_time_goes.pdf}
+\caption{BuyOffer time decomposed into validation and commit/network.}
+\label{fig:where}
+\end{figure}
+
+\textbf{Why $\Delta$ does not shorten the lifecycle.} Each of the seven
+operations is a distinct transaction with a distinct tx-id, so the cache is
+cold at every commit and SHACL+$\Delta$ pays the full miss cost plus cache
+bookkeeping. SHACL+$\Delta$ therefore shows the highest SmartChainDB median
+and the widest min--max range in this experiment; with $n{=}5$ trials and a
+${\approx}13$\,ms matcher on a consensus-dominated path, we do not
+interpret the difference as a property of the mechanism. The experiment
+establishes the envelope within which validation operates and confirms that
+differential re-validation is a validator-level optimization rather than a
+consensus-level one.
+
+\subsubsection{Results: Shared-Advertisement Commit Distribution}
+Fig.~\ref{fig:cdf} and Table~\ref{tab:cdf} show the commit-latency CDF for
+$n{=}20$ BuyOffers against a single \textsc{Open} advertisement.
+SmartChainDB medians are $179$\,ms (Direct), $226$\,ms (SHACL), and
+$222$\,ms (SHACL+$\Delta$); Fabric medians lie between $2.06$ and
+$2.13$\,s across treatments.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_cdf_shared_offer.pdf}
+\caption{Commit-latency CDF, shared-advertisement mix ($n{=}20$).}
+\label{fig:cdf}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Shared-advertisement BuyOffer commit latency (ms).}
+\label{tab:cdf}
+\small
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Treatment & SCDB median & SCDB p95 & Fabric median & Fabric p95 \\
+\midrule
+Direct & 179 & 215 & 2064 & 2081 \\
+SHACL & 226 & 323 & 2109 & 2177 \\
+SHACL+$\Delta$ & 222 & 400 & 2128 & 2197 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The ${\approx}47$\,ms separation between Direct and the two SHACL
+treatments on SmartChainDB is the declarative overhead of
+Section~\ref{sec:exp1} appearing on the commit path; because the offers
+carry distinct tx-ids, SHACL+$\Delta$ tracks SHACL rather than Direct. The
+distributions overlap through the body and diverge only in the tail
+(SHACL+$\Delta$ p95 of $400$\,ms), which we attribute to HTTP jitter and
+retry behavior rather than to the validation algorithm. On Fabric the
+treatments are indistinguishable at commit, since endorsement collection
+dominates the ${\approx}26$\,ms matcher call. The mix thus characterizes
+the latency class of the marketplace under each treatment rather than
+cache effectiveness.
+
+\subsubsection{Results: Offered versus Achieved Throughput}
+Fig.~\ref{fig:sat} and Table~\ref{tab:tps} plot achieved throughput against
+concurrency. SmartChainDB sustains ${\approx}3.7$--$4.6$\,tx/s from
+$C{=}1$ to $C{=}8$ under all treatments, whereas Fabric scales with
+concurrency: Direct from $0.48$ to $3.35$\,tx/s, SHACL from $0.48$ to
+$2.64$\,tx/s, and SHACL+$\Delta$ from $0.47$ to $3.40$\,tx/s.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_saturation.pdf}
+\caption{Offered versus achieved BuyOffer rate, one validator.}
+\label{fig:sat}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Achieved BuyOffer rate (tx/s) at concurrency $C$.}
+\label{tab:tps}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Treatment & $C{=}1$ & $C{=}2$ & $C{=}4$ & $C{=}8$ \\
+\midrule
+SmartChainDB (all treatments) & ${\approx}3.7$ & ${\approx}4.1$ & ${\approx}4.5$ & ${\approx}4.6$ \\
+Fabric Direct & 0.48 & 0.95 & 1.83 & 3.35 \\
+Fabric SHACL & 0.48 & 0.93 & 1.71 & 2.64 \\
+Fabric SHACL+$\Delta$ & 0.47 & 0.91 & 1.77 & 3.40 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_cpu_bdb.pdf}
+\caption{Container CPU during the SmartChainDB campaign (1\,s samples).}
+\label{fig:cpu}
+\end{figure}
+
+\textbf{Capacity patterns.} SmartChainDB is flat in $C$ because the client
+submits through \texttt{broadcast\_tx\_commit}, which blocks each issuer
+until its transaction is included in a block; the plateau therefore
+reflects Tendermint's block rate on this host rather than validation cost,
+and the treatments are indistinguishable. Fabric scales because independent
+endorsements overlap at the peers. The SHACL treatment on Fabric falls
+below Direct at $C{=}8$ ($2.64$ versus $3.35$\,tx/s) once concurrency
+exposes the matcher on the endorse path, and SHACL+$\Delta$ recovers to
+$3.40$\,tx/s, consistent with hits on the second SHACL call. At
+$C{=}4$--$8$ the Direct SmartChainDB run exhibits rising HTTP failures,
+which we attribute to single-process overload and exclude from
+cross-treatment comparison. The CPU trace (Fig.~\ref{fig:cpu}) shows the
+constraint engine largely idle, with short spikes in the BigchainDB worker,
+which is consistent with validation not being the saturating resource.
+
+\subsection{Experiment 3: Fail-Closed Validation Under State Change}
+\label{sec:exp3}
+
+\subsubsection{Methodology}
+We run the mutating-advertisement mix ($n{=}20$) and the
+stolen-advertisement probe under all three treatments on the four-validator
+deployment, recording the outcome and latency of every submission. We also
+run the conflict probe on SmartChainDB.
+
+\subsubsection{Results: Rejection Behavior}
+An earlier configuration of the SHACL engine accepted the stolen
+advertisement and committed offers submitted after UpdateAdv to
+\textsc{Closed}. The cause was that the shape consulted only the original
+Advertise document, whose metadata remains \textsc{Open}, and did not
+require the advertiser to be among the Create owners; Direct already
+rejected the stolen advertisement, while both engines ignored subsequent
+UpdateAdv status. We therefore extended the state merge so that the
+\emph{effective} advertisement status is resolved from the latest UpdateAdv
+and the advertiser is checked against the Create outputs, and we included
+the effective status in the $\Delta$ dependency hash.
+
+Table~\ref{tab:abort} and Fig.~\ref{fig:abort} report the re-measured
+outcomes. All three SmartChainDB treatments reject the stolen advertisement
+with HTTP~400 and reject all ten post-\textsc{Closed} offers, yielding a
+$50\%$ reject rate on the mutating mix that matches the Fabric port. A
+rejected offer returns in $16$\,ms under Direct and $33$--$36$\,ms under
+SHACL and SHACL+$\Delta$; a committed offer before UpdateAdv takes
+$0.76$--$0.94$\,s on the four-validator cluster.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{fig_abort_rate.pdf}
+\caption{Reject rate on the mutating-advertisement mix and the
+stolen-advertisement probe (4 validators).}
+\label{fig:abort}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{Fail-closed outcomes after the state-overlay fix.}
+\label{tab:abort}
+\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Check & SmartChainDB & Fabric \\
+\midrule
+Offers after \textsc{Closed} & $10/10$ rejected & $10/10$ rejected \\
+Mutating-mix reject rate & $50\%$ & $50\%$ \\
+Stolen advertisement & rejected ($400$) & rejected \\
+In-flight conflict ($n{=}12$) & $0/12$ aborted & n/a \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Interpretation.} The $50\%$ figure is the designed composition of
+the mix (half the offers precede the close and half follow it) rather than
+an artifact of load, and identical outcomes across Direct, SHACL, and
+SHACL+$\Delta$ indicate that the declarative path is now authoritative for
+the two constraints that previously leaked. Including effective status in
+the dependency hash is what allows caching and correctness to coexist: an
+UpdateAdv alters the key, so a verdict cached before the close cannot be
+reused after it. Reject and commit latencies are different clocks---a
+rejection is an HTTP~400 returned before consensus, whereas a commit
+traverses four-validator Tendermint---and should not be compared as
+evidence that validation is faster when it rejects. The conflict probe
+records $0/12$ aborts because the ${\approx}13$\,ms validation window is
+short relative to block time, so the racing UpdateAdv rarely lands inside
+it; sequential fail-closed behavior does not depend on that race.
+
+\subsubsection{Results: Four-Validator Commit Path}
+Moving from one to four validators raises committed BuyOffer latency from
+${\approx}200$\,ms to $0.76$--$0.94$\,s, while rejection latency is
+unchanged at $16$--$36$\,ms. The increase is attributable to gossip,
+voting, and four ABCI application paths rather than to validation, and it
+is identical in kind across treatments. The deployment confirms that the
+marketplace commits under multi-validator consensus with the same
+fail-closed outcomes; it does not, and by construction cannot, increase
+SHACL+$\Delta$ hit rate, since the cache is per process.
+
+\subsection{Summary of Findings}
+\label{sec:summary}
+With respect to RQ1, declarative validation costs ${\approx}13$\,ms per
+SHACL evaluation on SmartChainDB (${\approx}26$\,ms on Fabric), and
+differential re-validation reduces that to a sub-$10\,\mu$s lookup while the
+referenced state is unchanged, reverting to a full evaluation when it
+changes. With respect to RQ2, the three treatments occupy the same
+end-to-end latency class on each engine, validation accounts for a few
+percent of committed time, and throughput is bounded by the submission
+model (\texttt{broadcast\_tx\_commit}) or by endorsement overlap rather than
+by validation. With respect to RQ3, after resolving effective advertisement
+status and ownership in the state merge, SHACL and SHACL+$\Delta$ reject
+non-owner advertisements and post-close offers with the same outcomes as
+Direct, and caching preserves those outcomes because the dependency hash
+includes the mutated state. With respect to RQ4, the same shapes and
+treatments produce the same qualitative behavior on Fabric, with hit
+patterns that differ only in the client's re-validation call pattern.
+
+\section{Limitations and Threats to Validity}
+\label{sec:threats}
+\textbf{Deployment scope.} Latency and load were measured on one
+workstation with a single SmartChainDB validator and a two-peer Fabric
+test-network; the four-validator deployment is a LAN cluster rather than a
+geo-distributed one. An attempt to emulate WAN delay with
+\texttt{tc netem} was denied \texttt{NET\_ADMIN} in the container runtime,
+so no WAN results are reported.
+
+\textbf{Cache scope.} SHACL+$\Delta$ state is in-process. With more than
+one gunicorn worker the cache is partitioned; we pin one worker. Additional
+validators exercise the commit path and do not increase hit rate.
+
+\textbf{Construct validity.} Hit rate measured over a stream of distinct
+BuyOffers is not an appropriate construct for differential re-validation,
+since each offer has a fresh tx-id; the validator microbenchmark, which
+re-validates one pending transaction, is the appropriate one. Rejection
+latency and commit latency are measured on different paths and are not
+directly comparable.
+
+\textbf{Evaluation scope.} The workload is synthetic by necessity: public
+ledgers do not record the semantic dependencies the shapes name. Each
+treatment commits on the order of $220$ transactions, which is sized to
+exercise a known dependency graph under repeatable conditions rather than
+to characterize capacity at scale. The $0/12$ conflict-probe result bounds
+in-flight abort only for the ${\approx}13$\,ms matcher measured here. HTTP
+500 and ``already exists'' retries may inflate tail latency.
+
+\textbf{Cross-platform comparison.} The Fabric port provides a portability
+reference for the same shapes and treatments. We configure both systems
+with identical transaction semantics, but interpret cross-platform latency
+and throughput cautiously because the systems differ in runtime, storage
+architecture, and consensus model; we do not report either engine as
+outperforming the other.
+
+\section*{Artifacts}
+JSON traces: \texttt{eval/results/}. Figures: \texttt{eval/figures/}.
+Drivers: \texttt{eval/bdb\_professor\_eval.py},
+\texttt{fabric/client/professor\_eval.js}.
+\end{document}

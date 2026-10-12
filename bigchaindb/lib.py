@@ -305,6 +305,28 @@ class BigchainDB(object):
         for tx_doc in cursor:
             yield Transaction.from_dict(tx_doc)
 
+    def get_effective_advertisement_status(self, advertisement_id):
+        """Latest OPEN/LOCKED/CLOSED for an advertisement.
+
+        The original ADVERTISEMENT metadata stays OPEN; later UPDATE_ADV
+        transactions carry the current status.
+        """
+        advertisement = self.get_transaction(advertisement_id)
+        if advertisement is None:
+            return None
+        status = (advertisement.metadata or {}).get("status")
+        update_ids = backend.query.get_update_adv_ids_for_advertisement(
+            self.connection, advertisement_id
+        )
+        for update_id in update_ids:
+            update_tx = self.get_transaction(update_id)
+            if update_tx is None:
+                continue
+            next_status = (update_tx.metadata or {}).get("status")
+            if next_status:
+                status = next_status
+        return status
+
     def get_open_advertisements_by_asset(self, asset_id):
         """Get all OPEN advertisements for a specific asset.
         

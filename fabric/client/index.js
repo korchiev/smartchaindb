@@ -1,20 +1,15 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { Gateway, Wallets } from 'fabric-network';
 import fetch from 'node-fetch';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-
-const args = yargs(hideBin(process.argv))
-  .command('submit <fn>', 'Submit a marketplace transaction', (y) => {
-    y.positional('fn', { describe: 'Chaincode function name', type: 'string' });
-  })
-  .option('payload', { type: 'string', default: '{}', describe: 'JSON payload' })
-  .option('use-shacl', { type: 'boolean', default: false, describe: 'SHACL pre-validate using world state' })
-  .help().argv;
+import { SHACLDeltaCache, dependencyIds, hashFacts } from './delta.js';
 
 const SHACL_ENDPOINT = process.env.SHACL_ENDPOINT || 'http://localhost:3001';
 const METRICS_PATH = path.resolve('metrics.fabric.jsonl');
+const deltaCache = new SHACLDeltaCache();
 
 function nowMs() {
   return Date.now();
@@ -42,7 +37,14 @@ function buildTurtle(operation, facts) {
   return ttl.replace(/;\n$/, ' .\n');
 }
 
-async function shaclValidate(operation, facts) {
+async function shaclValidate(operation, facts, cacheMeta = null) {
+  if (cacheMeta) {
+    const hit = deltaCache.get(cacheMeta.txId, cacheMeta.depHash);
+    if (hit) {
+      logMetric('shacl_prevalidate', { operation, conforms: !!hit.conforms, duration_ms: 0, cached: true });
+      return { ...hit, duration_ms: 0, cached: true };
+    }
+  }
   const data = buildTurtle(operation, facts);
   const t0 = nowMs();
   const res = await fetch(`${SHACL_ENDPOINT}/validate`, {
@@ -56,8 +58,11 @@ async function shaclValidate(operation, facts) {
     throw new Error(`SHACL service error ${res.status}: ${text}`);
   }
   const body = await res.json();
-  logMetric('shacl_prevalidate', { operation, conforms: !!body.conforms, duration_ms: duration });
-  return { ...body, duration_ms: duration, turtle: data };
+  if (cacheMeta) {
+    deltaCache.put(cacheMeta.txId, cacheMeta.depHash, body, cacheMeta.depIds || []);
+  }
+  logMetric('shacl_prevalidate', { operation, conforms: !!body.conforms, duration_ms: duration, cached: false });
+  return { ...body, duration_ms: duration, turtle: data, cached: false };
 }
 
 async function safeEvaluate(contract, fn, ...fnArgs) {
@@ -267,7 +272,63 @@ async function submit(contract, fn, payload) {
   }
 }
 
+async function submitMarketplace(contract, fn, payload, options = {}) {
+  const useShacl = !!options.useShacl;
+  const useDelta = !!options.useDelta;
+  const opName = operationMap[fn];
+  let shaclMs = 0;
+  let cached = false;
+  if (useShacl) {
+    const facts = await gatherStateFacts(contract, fn, payload);
+    const cacheMeta = useDelta
+      ? {
+          txId: payload.assetId || payload.advId || payload.offerId || payload.sellId || payload.requestId || fn,
+          depHash: hashFacts(facts),
+          depIds: dependencyIds(fn, payload),
+        }
+      : null;
+    const result = await shaclValidate(opName, facts, cacheMeta);
+    shaclMs = result.duration_ms;
+    cached = !!result.cached;
+    if (!result.conforms) {
+      const err = new Error('SHACL_REJECT');
+      err.results = result.results;
+      err.exitCode = 2;
+      throw err;
+    }
+    if (useDelta && options.mempoolRecheck) {
+      const again = await shaclValidate(opName, facts, cacheMeta);
+      shaclMs += again.duration_ms;
+      cached = !!again.cached;
+    }
+  }
+  const t1 = nowMs();
+  const response = await submit(contract, fn, payload);
+  const duration = nowMs() - t1;
+  if (useDelta) {
+    deltaCache.onCommitted(fn, payload);
+  }
+  logMetric('fabric_submit', {
+    function: fn,
+    duration_ms: duration,
+    shacl_ms: shaclMs,
+    use_shacl: useShacl,
+    use_delta: useDelta,
+    cached,
+  });
+  return { response, duration_ms: duration, shacl_ms: shaclMs, cached };
+}
+
 async function main() {
+  const args = yargs(hideBin(process.argv))
+    .command('submit <fn>', 'Submit a marketplace transaction', (y) => {
+      y.positional('fn', { describe: 'Chaincode function name', type: 'string' });
+    })
+    .option('payload', { type: 'string', default: '{}', describe: 'JSON payload' })
+    .option('use-shacl', { type: 'boolean', default: false, describe: 'SHACL pre-validate using world state' })
+    .option('use-delta', { type: 'boolean', default: false, describe: 'Reuse SHACL verdicts when dependency values match' })
+    .demandCommand(1)
+    .help().argv;
   const fn = args.fn;
   const payload = JSON.parse(args.payload || '{}');
   const opName = operationMap[fn];
@@ -275,29 +336,38 @@ async function main() {
 
   const { gateway, contract } = await getGateway();
   try {
-    let shaclMs = 0;
-    if (args['use-shacl']) {
-      const facts = await gatherStateFacts(contract, fn, payload);
-      const result = await shaclValidate(opName, facts);
-      shaclMs = result.duration_ms;
-      if (!result.conforms) {
-        console.error('SHACL validation failed:', result.results);
-        process.exit(2);
-      }
+    const result = await submitMarketplace(contract, fn, payload, {
+      useShacl: !!args['use-shacl'],
+      useDelta: !!args['use-delta'] || process.env.USE_SHACL_DELTA === 'true',
+    });
+    console.log('OK:', result.response && result.response.toString());
+  } catch (e) {
+    if (e && e.exitCode === 2) {
+      console.error('SHACL validation failed:', e.results);
+      process.exit(2);
     }
-    const t1 = nowMs();
-    const response = await submit(contract, fn, payload);
-    const duration = nowMs() - t1;
-    logMetric('fabric_submit', { function: fn, duration_ms: duration, shacl_ms: shaclMs, use_shacl: !!args['use-shacl'] });
-    console.log('OK:', response && response.toString());
+    throw e;
   } finally {
     gateway.disconnect();
   }
 }
 
-main()
-  .then(() => process.exit(0))
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  });
+const thisFile = fileURLToPath(import.meta.url);
+const invoked = process.argv[1] && path.resolve(process.argv[1]) === thisFile;
+if (invoked) {
+  main()
+    .then(() => process.exit(0))
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    });
+}
+
+export {
+  getGateway,
+  submitMarketplace,
+  operationMap,
+  deltaCache,
+  shaclValidate,
+  gatherStateFacts,
+};

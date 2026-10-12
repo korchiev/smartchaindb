@@ -166,6 +166,42 @@ function extractTransactionData(dataset) {
     return data;
 }
 
+async function metadataFor(txId) {
+    const row = await db.collection('metadata').findOne({ id: txId });
+    return row && row.metadata ? row.metadata : null;
+}
+
+function createOwnerKeys(createTx) {
+    if (!createTx || !Array.isArray(createTx.outputs) || !createTx.outputs[0]) {
+        return [];
+    }
+    const keys = createTx.outputs[0].public_keys;
+    return Array.isArray(keys) ? keys : [];
+}
+
+/**
+ * Original ADVERTISEMENT metadata stays OPEN. Later UPDATE_ADV txs
+ * carry the current status (same overlay Fabric applies in world state).
+ */
+async function latestAdvertisementStatus(advertisementId, transactions) {
+    const orig = await metadataFor(advertisementId);
+    let status = orig && orig.status;
+    const updates = await transactions.find({
+        operation: 'UPDATE_ADV',
+        $or: [
+            { 'asset.id': advertisementId },
+            { 'asset.data.id': advertisementId }
+        ]
+    }).sort({ _id: 1 }).toArray();
+    for (const upd of updates) {
+        const meta = await metadataFor(upd.id);
+        if (meta && meta.status) {
+            status = meta.status;
+        }
+    }
+    return status;
+}
+
 /**
  * Validate state consistency using MongoDB queries
  */
@@ -310,6 +346,17 @@ async function validateAdvertisement(txData, transactions, errors) {
                 focusNode: `urn:tx:${txData.id}`,
                 severity: 'Violation'
             });
+        } else {
+            const advertiser = txData.metadata && txData.metadata.advertiser_public_key;
+            const owners = createOwnerKeys(asset);
+            if (!advertiser || owners.length === 0 || owners.indexOf(advertiser) === -1) {
+                errors.push({
+                    message: ['Advertiser must be the original owner of the asset'],
+                    path: 'http://bigchaindb.com/ns#advertiser_public_key',
+                    focusNode: `urn:tx:${txData.id}`,
+                    severity: 'Violation'
+                });
+            }
         }
         
         // Check if asset is already advertised
@@ -362,15 +409,23 @@ async function validateBuyOffer(txData, transactions, errors) {
         return;
     }
     
-    // BigchainDB stores metadata in a separate collection
-    const metadata = await db.collection('metadata').findOne({
-        id: advertisementId
-    });
-    
-    if (metadata && metadata.metadata && metadata.metadata.status !== 'OPEN') {
+    const status = await latestAdvertisementStatus(advertisementId, transactions);
+    if (status !== 'OPEN') {
         errors.push({
-            message: [`Advertisement '${advertisementId}' is not open for offers (status: ${metadata.metadata.status})`],
+            message: [`Advertisement '${advertisementId}' is not open for offers (status: ${status || 'unknown'})`],
             path: 'http://bigchaindb.com/ns#advertisement_id',
+            focusNode: `urn:tx:${txData.id}`,
+            severity: 'Violation'
+        });
+    }
+
+    const adMeta = await metadataFor(advertisementId);
+    const advertiser = adMeta && adMeta.advertiser_public_key;
+    const buyer = txData.metadata && txData.metadata.buyer_public_key;
+    if (buyer && advertiser && buyer === advertiser) {
+        errors.push({
+            message: ['Buyer cannot be the same as advertiser'],
+            path: 'http://bigchaindb.com/ns#buyer_public_key',
             focusNode: `urn:tx:${txData.id}`,
             severity: 'Violation'
         });
@@ -494,6 +549,21 @@ async function validateSell(txData, transactions, errors) {
             focusNode: `urn:tx:${txData.id}`,
             severity: 'Violation'
         });
+    }
+
+    const offerAsset = buyOffer.asset || {};
+    const offerData = offerAsset.data || {};
+    const advertisementId = offerAsset.advertisement_id || offerData.advertisement_id;
+    if (advertisementId) {
+        const adStatus = await latestAdvertisementStatus(advertisementId, transactions);
+        if (adStatus === 'LOCKED' || adStatus === 'CLOSED') {
+            errors.push({
+                message: [`Cannot sell asset with advertisement status ${adStatus}`],
+                path: 'http://bigchaindb.com/ns#buy_offer_id',
+                focusNode: `urn:tx:${txData.id}`,
+                severity: 'Violation'
+            });
+        }
     }
 }
 

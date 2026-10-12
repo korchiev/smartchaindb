@@ -48,6 +48,8 @@ services:
       BIGCHAINDB_TENDERMINT_PORT: 26657
       BIGCHAINDB_ENDPOINT: bigchaindb
       BIGCHAINDB_SERVER_WORKERS: 2
+      BIGCHAINDB_SHACL_ENABLED: ${BIGCHAINDB_SHACL_ENABLED:-true}
+      BIGCHAINDB_SHACL_CACHE: ${BIGCHAINDB_SHACL_CACHE:-true}
     ports:
       - "9984:9984"
       - "9985:9985"
@@ -66,8 +68,12 @@ services:
       start_period: 40s
     command: "bigchaindb -l DEBUG start"
     restart: always
+    cap_add:
+      - NET_ADMIN
   tendermint:
     image: tendermint/tendermint:v0.31.5
+    cap_add:
+      - NET_ADMIN
     volumes:
       - ./docker/data/tendermint:/tendermint
     entrypoint: ""

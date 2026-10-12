@@ -1,0 +1,296 @@
+# LAN 4-validator SmartChainDB. Each node is Mongo + Tendermint + BigchainDB + SHACL.
+# Usage:
+#   bash docker/4node/gen_genesis.sh
+#   docker compose --env-file .env --env-file docker/4node/peers.env -f docker-compose.4node.yml up -d
+# Stop the 1-node stack first (ports 9984 / 26657).
+
+name: scdb4
+
+x-mongo: &mongo
+  image: mongo:3.6
+  env_file:
+    - .env
+  environment:
+    MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+    MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+  command: mongod
+  restart: always
+
+x-shacl: &shacl
+  build:
+    context: ./bigchaindb/backend/localshacl/shapes
+    dockerfile: Dockerfile
+  image: smartchaindb-shacleng
+  volumes:
+    - ./bigchaindb/backend/localshacl/shapes/shapes:/app/shapes
+    - ./bigchaindb/backend/localshacl/shapes/index.js:/app/index.js
+    - /app/node_modules
+  restart: always
+
+x-tm: &tm
+  image: tendermint/tendermint:v0.31.5
+  entrypoint: ""
+  restart: always
+  cap_add:
+    - NET_ADMIN
+
+x-bdb: &bdb
+  build:
+    context: .
+    dockerfile: Dockerfile-dev
+  image: smartchaindb-bigchaindb
+  volumes:
+    - ./bigchaindb:/usr/src/app/bigchaindb
+    - ./tests:/usr/src/app/tests
+    - ./eval:/usr/src/app/eval
+    - ./setup.py:/usr/src/app/setup.py
+  environment:
+    BIGCHAINDB_DATABASE_BACKEND: localmongodb
+    BIGCHAINDB_DATABASE_LOGIN: ${MONGO_INITDB_ROOT_USERNAME}
+    BIGCHAINDB_DATABASE_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    BIGCHAINDB_DATABASE_PORT: 27017
+    BIGCHAINDB_SERVER_BIND: 0.0.0.0:9984
+    BIGCHAINDB_WSSERVER_HOST: 0.0.0.0
+    BIGCHAINDB_TENDERMINT_PORT: 26657
+    BIGCHAINDB_SERVER_WORKERS: "1"
+    BIGCHAINDB_SHACL_ENABLED: ${BIGCHAINDB_SHACL_ENABLED:-true}
+    BIGCHAINDB_SHACL_CACHE: ${BIGCHAINDB_SHACL_CACHE:-true}
+  command: "bigchaindb -l INFO start"
+  restart: always
+  cap_add:
+    - NET_ADMIN
+  healthcheck:
+    test:
+      - CMD
+      - curl
+      - -sf
+      - http://127.0.0.1:9984
+    interval: 5s
+    timeout: 5s
+    retries: 20
+    start_period: 50s
+
+services:
+  mongo1:
+    <<: *mongo
+    hostname: mongo1
+  mongo2:
+    <<: *mongo
+    hostname: mongo2
+  mongo3:
+    <<: *mongo
+    hostname: mongo3
+  mongo4:
+    <<: *mongo
+    hostname: mongo4
+
+  shacl1:
+    <<: *shacl
+    hostname: shacl1
+    depends_on:
+      - mongo1
+    environment:
+      MONGO_HOST: mongo1
+      MONGO_PORT: 27017
+      MONGO_USER: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_DATABASE: bigchain
+  shacl2:
+    <<: *shacl
+    hostname: shacl2
+    depends_on:
+      - mongo2
+    environment:
+      MONGO_HOST: mongo2
+      MONGO_PORT: 27017
+      MONGO_USER: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_DATABASE: bigchain
+  shacl3:
+    <<: *shacl
+    hostname: shacl3
+    depends_on:
+      - mongo3
+    environment:
+      MONGO_HOST: mongo3
+      MONGO_PORT: 27017
+      MONGO_USER: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_DATABASE: bigchain
+  shacl4:
+    <<: *shacl
+    hostname: shacl4
+    depends_on:
+      - mongo4
+    environment:
+      MONGO_HOST: mongo4
+      MONGO_PORT: 27017
+      MONGO_USER: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_DATABASE: bigchain
+
+  tm1:
+    <<: *tm
+    hostname: tm1
+    volumes:
+      - ./docker/4node/n1:/tendermint
+    ports:
+      - "26657:26657"
+    command: >
+      sh -c 'tendermint node
+      --consensus.create_empty_blocks=false
+      --proxy_app=tcp://bdb1:26658
+      --p2p.laddr=tcp://0.0.0.0:26656
+      --rpc.laddr=tcp://0.0.0.0:26657
+      --p2p.persistent_peers=${TM1_PEERS}
+      --p2p.pex=false'
+  tm2:
+    <<: *tm
+    hostname: tm2
+    volumes:
+      - ./docker/4node/n2:/tendermint
+    ports:
+      - "26667:26657"
+    command: >
+      sh -c 'tendermint node
+      --consensus.create_empty_blocks=false
+      --proxy_app=tcp://bdb2:26658
+      --p2p.laddr=tcp://0.0.0.0:26656
+      --rpc.laddr=tcp://0.0.0.0:26657
+      --p2p.persistent_peers=${TM2_PEERS}
+      --p2p.pex=false'
+  tm3:
+    <<: *tm
+    hostname: tm3
+    volumes:
+      - ./docker/4node/n3:/tendermint
+    ports:
+      - "26677:26657"
+    command: >
+      sh -c 'tendermint node
+      --consensus.create_empty_blocks=false
+      --proxy_app=tcp://bdb3:26658
+      --p2p.laddr=tcp://0.0.0.0:26656
+      --rpc.laddr=tcp://0.0.0.0:26657
+      --p2p.persistent_peers=${TM3_PEERS}
+      --p2p.pex=false'
+  tm4:
+    <<: *tm
+    hostname: tm4
+    volumes:
+      - ./docker/4node/n4:/tendermint
+    ports:
+      - "26687:26657"
+    command: >
+      sh -c 'tendermint node
+      --consensus.create_empty_blocks=false
+      --proxy_app=tcp://bdb4:26658
+      --p2p.laddr=tcp://0.0.0.0:26656
+      --rpc.laddr=tcp://0.0.0.0:26657
+      --p2p.persistent_peers=${TM4_PEERS}
+      --p2p.pex=false'
+
+  bdb1:
+    <<: *bdb
+    hostname: bdb1
+    depends_on:
+      - mongo1
+      - tm1
+      - shacl1
+    environment:
+      BIGCHAINDB_DATABASE_BACKEND: localmongodb
+      BIGCHAINDB_DATABASE_HOST: mongo1
+      BIGCHAINDB_DATABASE_LOGIN: ${MONGO_INITDB_ROOT_USERNAME}
+      BIGCHAINDB_DATABASE_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      BIGCHAINDB_DATABASE_PORT: 27017
+      BIGCHAINDB_SERVER_BIND: 0.0.0.0:9984
+      BIGCHAINDB_WSSERVER_HOST: 0.0.0.0
+      BIGCHAINDB_WSSERVER_ADVERTISED_HOST: bdb1
+      BIGCHAINDB_TENDERMINT_HOST: tm1
+      BIGCHAINDB_TENDERMINT_PORT: 26657
+      BIGCHAINDB_ENDPOINT: bdb1
+      BIGCHAINDB_SERVER_WORKERS: "1"
+      BIGCHAINDB_SHACL_ENABLED: ${BIGCHAINDB_SHACL_ENABLED:-true}
+      BIGCHAINDB_SHACL_CACHE: ${BIGCHAINDB_SHACL_CACHE:-true}
+      BIGCHAINDB_SHACL_ENDPOINT: http://shacl1:3000
+    ports:
+      - "9984:9984"
+      - "9985:9985"
+  bdb2:
+    <<: *bdb
+    hostname: bdb2
+    depends_on:
+      - mongo2
+      - tm2
+      - shacl2
+    environment:
+      BIGCHAINDB_DATABASE_BACKEND: localmongodb
+      BIGCHAINDB_DATABASE_HOST: mongo2
+      BIGCHAINDB_DATABASE_LOGIN: ${MONGO_INITDB_ROOT_USERNAME}
+      BIGCHAINDB_DATABASE_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      BIGCHAINDB_DATABASE_PORT: 27017
+      BIGCHAINDB_SERVER_BIND: 0.0.0.0:9984
+      BIGCHAINDB_WSSERVER_HOST: 0.0.0.0
+      BIGCHAINDB_WSSERVER_ADVERTISED_HOST: bdb2
+      BIGCHAINDB_TENDERMINT_HOST: tm2
+      BIGCHAINDB_TENDERMINT_PORT: 26657
+      BIGCHAINDB_ENDPOINT: bdb2
+      BIGCHAINDB_SERVER_WORKERS: "1"
+      BIGCHAINDB_SHACL_ENABLED: ${BIGCHAINDB_SHACL_ENABLED:-true}
+      BIGCHAINDB_SHACL_CACHE: ${BIGCHAINDB_SHACL_CACHE:-true}
+      BIGCHAINDB_SHACL_ENDPOINT: http://shacl2:3000
+    ports:
+      - "9184:9984"
+      - "9185:9985"
+  bdb3:
+    <<: *bdb
+    hostname: bdb3
+    depends_on:
+      - mongo3
+      - tm3
+      - shacl3
+    environment:
+      BIGCHAINDB_DATABASE_BACKEND: localmongodb
+      BIGCHAINDB_DATABASE_HOST: mongo3
+      BIGCHAINDB_DATABASE_LOGIN: ${MONGO_INITDB_ROOT_USERNAME}
+      BIGCHAINDB_DATABASE_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      BIGCHAINDB_DATABASE_PORT: 27017
+      BIGCHAINDB_SERVER_BIND: 0.0.0.0:9984
+      BIGCHAINDB_WSSERVER_HOST: 0.0.0.0
+      BIGCHAINDB_WSSERVER_ADVERTISED_HOST: bdb3
+      BIGCHAINDB_TENDERMINT_HOST: tm3
+      BIGCHAINDB_TENDERMINT_PORT: 26657
+      BIGCHAINDB_ENDPOINT: bdb3
+      BIGCHAINDB_SERVER_WORKERS: "1"
+      BIGCHAINDB_SHACL_ENABLED: ${BIGCHAINDB_SHACL_ENABLED:-true}
+      BIGCHAINDB_SHACL_CACHE: ${BIGCHAINDB_SHACL_CACHE:-true}
+      BIGCHAINDB_SHACL_ENDPOINT: http://shacl3:3000
+    ports:
+      - "9284:9984"
+      - "9285:9985"
+  bdb4:
+    <<: *bdb
+    hostname: bdb4
+    depends_on:
+      - mongo4
+      - tm4
+      - shacl4
+    environment:
+      BIGCHAINDB_DATABASE_BACKEND: localmongodb
+      BIGCHAINDB_DATABASE_HOST: mongo4
+      BIGCHAINDB_DATABASE_LOGIN: ${MONGO_INITDB_ROOT_USERNAME}
+      BIGCHAINDB_DATABASE_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      BIGCHAINDB_DATABASE_PORT: 27017
+      BIGCHAINDB_SERVER_BIND: 0.0.0.0:9984
+      BIGCHAINDB_WSSERVER_HOST: 0.0.0.0
+      BIGCHAINDB_WSSERVER_ADVERTISED_HOST: bdb4
+      BIGCHAINDB_TENDERMINT_HOST: tm4
+      BIGCHAINDB_TENDERMINT_PORT: 26657
+      BIGCHAINDB_ENDPOINT: bdb4
+      BIGCHAINDB_SERVER_WORKERS: "1"
+      BIGCHAINDB_SHACL_ENABLED: ${BIGCHAINDB_SHACL_ENABLED:-true}
+      BIGCHAINDB_SHACL_CACHE: ${BIGCHAINDB_SHACL_CACHE:-true}
+      BIGCHAINDB_SHACL_ENDPOINT: http://shacl4:3000
+    ports:
+      - "9384:9984"
+      - "9385:9985"

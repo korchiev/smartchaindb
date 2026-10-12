@@ -222,6 +222,12 @@ class App(BaseApplication):
         logger.debug("storing tx")
         self.block_txn_ids.append(transaction.id)
         self.block_transactions.append(transaction)
+        try:
+            from bigchaindb.common.shacl_validator import get_shacl_validator
+
+            get_shacl_validator().on_tx_committed(transaction.to_dict())
+        except Exception:
+            logger.debug("SHACL+Δ commit invalidation skipped", exc_info=True)
         log_metric(
             "deliver_tx",
             (transaction.metadata or {}).get("requestCreationTimestamp"),

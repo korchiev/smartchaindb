@@ -34,6 +34,27 @@ class ApiV1Index(Resource):
         return flask.jsonify(get_api_v1_info('/'))
 
 
+class ShaclStatsApi(Resource):
+    """Eval scrape of in-process SHACL+Δ / conflict counters (one gunicorn worker)."""
+
+    def get(self):
+        from flask import request
+        from bigchaindb.common.shacl_validator import get_shacl_validator
+
+        validator = get_shacl_validator()
+        reset = str(request.args.get("reset") or "").strip().lower() in ("1", "true", "yes")
+        if reset:
+            validator.delta_cache.clear()
+            validator.conflict_table.clear()
+        return flask.jsonify({
+            "enabled": bool(validator.enabled),
+            "cache_enabled": bool(validator.cache_enabled),
+            "reset": reset,
+            "cache": validator.delta_cache.stats(),
+            "conflict": validator.conflict_table.stats(),
+        })
+
+
 def get_api_v1_info(api_prefix):
     """Return a dict with all the information specific for the v1 of the
     api.

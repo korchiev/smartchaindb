@@ -93,10 +93,13 @@ config = {
         "granular_levels": {},
     },
     "shacl": {
-        # SHACL validation settings (REQUIRED - all validation is now SHACL-based)
-        "enabled": True,  # Must be True - SHACL is the primary validation system
-        "endpoint": "http://shacleng:3000",  # SHACL microservice endpoint
-        "timeout": 10,  # HTTP request timeout in seconds (increased for state queries)
+        "enabled": True,  # Direct baseline: BIGCHAINDB_SHACL_ENABLED=false
+        "endpoint": "http://shacleng:3000",
+        "timeout": 10,
+        "fail_open": False,
+        "cache_enabled": True,  # SHACL+Δ; set BIGCHAINDB_SHACL_CACHE=false for SHACL-only
+        "cache_max_size": 2048,
+        "cache_ttl": None,
     },
 }
 
@@ -118,9 +121,11 @@ Transaction.register_type(Transaction.BID, models.Transaction)
 Transaction.register_type(Transaction.ACCEPT, models.Transaction)
 Transaction.register_type(Transaction.RETURN, models.Transaction)
 Transaction.register_type(Transaction.ADVERTISEMENT, models.Transaction)
+Transaction.register_type(Transaction.UPDATE_ADV, models.Transaction)
 Transaction.register_type(Transaction.BUY_OFFER, models.Transaction)
 Transaction.register_type(Transaction.SELL, models.Transaction)
 Transaction.register_type(Transaction.REQUEST_RETURN, models.Transaction)
+Transaction.register_type(Transaction.SELLER_ACCEPT_RETURN, models.Transaction)
 Transaction.register_type(Transaction.ACCEPT_RETURN, models.Transaction)
 Transaction.register_type(ValidatorElection.OPERATION, ValidatorElection)
 Transaction.register_type(ChainMigrationElection.OPERATION, ChainMigrationElection)

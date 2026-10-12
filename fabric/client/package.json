@@ -8,7 +8,9 @@
     "start": "node index.js",
     "enroll": "node enroll.js",
     "smoke": "node smoke.js",
-    "workload": "node workload.js"
+    "workload": "node workload.js",
+    "professor": "node professor_eval.js",
+    "eval": "node eval_lifecycle.js"
   },
   "dependencies": {
     "fabric-ca-client": "^2.2.20",

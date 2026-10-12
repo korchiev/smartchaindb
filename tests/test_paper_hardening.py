@@ -44,6 +44,7 @@ _DEFAULT_SHACL_CONFIG: Dict[str, Any] = {
         "enabled": True,
         "endpoint": "http://shacleng:3000",
         "timeout": 5,
+        "cache_enabled": False,
     }
 }
 
@@ -61,6 +62,11 @@ def _install_bigchaindb_stub(shacl_cfg: Dict[str, Any] | None = None) -> None:
     stub.config = dict(shacl_cfg or _DEFAULT_SHACL_CONFIG)
     stub.__path__ = []  # mark it as a package so submodule imports resolve
     sys.modules["bigchaindb"] = stub
+
+    common = types.ModuleType("bigchaindb.common")
+    common.__path__ = [str(ROOT / "bigchaindb" / "common")]
+    sys.modules["bigchaindb.common"] = common
+    stub.common = common
 
     config_utils_stub = types.ModuleType("bigchaindb.config_utils")
     sys.modules["bigchaindb.config_utils"] = config_utils_stub
@@ -271,6 +277,42 @@ class TestValidateTransaction:
             conforms, results = enabled_client.validate_transaction(_valid_buy_offer_tx())
         assert conforms is True
         assert results == []
+
+    def test_delta_cache_skips_second_http_call(self, enabled_client):
+        enabled_client.cache_enabled = True
+        tx = _valid_buy_offer_tx()
+        with patch("requests.post", return_value=self._post_ok(True)) as post:
+            first = enabled_client.validate_transaction(tx, dep_state_hash="dep-open")
+            second = enabled_client.validate_transaction(tx, dep_state_hash="dep-open")
+        assert first == (True, [])
+        assert second == (True, [])
+        assert post.call_count == 1
+        enabled_client.on_tx_committed({"id": "b" * 64, "operation": "ADVERTISEMENT", "asset": {}})
+        with patch("requests.post", return_value=self._post_ok(True)) as post2:
+            third = enabled_client.validate_transaction(tx, dep_state_hash="dep-open")
+        assert third == (True, [])
+        assert post2.call_count == 1
+
+    def test_conflict_aborts_during_http(self, enabled_client):
+        enabled_client.cache_enabled = True
+        tx = _valid_buy_offer_tx()
+
+        def post_side_effect(*_args, **_kwargs):
+            enabled_client.on_tx_committed(
+                {
+                    "id": "upd1",
+                    "operation": "UPDATE_ADV",
+                    "asset": {"id": "b" * 64, "data": {"id": "b" * 64}},
+                }
+            )
+            return self._post_ok(True)
+
+        with patch("requests.post", side_effect=post_side_effect) as post:
+            conforms, results = enabled_client.validate_transaction(tx, dep_state_hash="dep-open")
+        assert post.call_count == 1
+        assert conforms is False
+        assert "conflict" in results[0]["message"].lower()
+        assert enabled_client.delta_cache.get(tx["id"], "dep-open") is None
 
     def test_shape_violation_returned(self, enabled_client):
         with patch(

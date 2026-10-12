@@ -1622,6 +1622,9 @@ class Transaction(object):
             self.INTEREST,
             self.ACCEPT,
             self.ADVERTISEMENT,
+            self.UPDATE_ADV,
+            self.REQUEST_RETURN,
+            self.SELLER_ACCEPT_RETURN,
         ]:
             # NOTE: Since in the case of a `CREATE`-transaction we do not have
             #       to check for outputs, we're just submitting dummy
@@ -2222,8 +2225,13 @@ class Transaction(object):
             
         if advertisement_tx.operation != 'ADVERTISEMENT':
             raise ValueError(f"Referenced transaction {advertisement_id} is not an advertisement")
-            
-        if advertisement_tx.metadata.get('status') != 'OPEN':
+
+        ad_status = advertisement_tx.metadata.get('status')
+        if hasattr(bigchain, 'get_effective_advertisement_status'):
+            overlay = bigchain.get_effective_advertisement_status(advertisement_id)
+            if overlay is not None:
+                ad_status = overlay
+        if ad_status != 'OPEN':
             raise ValueError(f"Referenced advertisement {advertisement_id} is not OPEN")
 
         # Validate buyer ≠ advertiser
@@ -2377,8 +2385,12 @@ class Transaction(object):
         if seller_pub_key not in output.public_keys:
             raise ValueError("Seller must be the current owner of the asset")
 
-        # Validate ad is not already LOCKED or CLOSED
+        # Validate ad is not already LOCKED or CLOSED (honor later UPDATE_ADV)
         ad_status = advertisement_tx.metadata.get('status')
+        if hasattr(bigchain, 'get_effective_advertisement_status'):
+            overlay = bigchain.get_effective_advertisement_status(advertisement_id)
+            if overlay is not None:
+                ad_status = overlay
         if ad_status in ['LOCKED', 'CLOSED']:
             raise ValueError(f"Cannot sell asset with advertisement status {ad_status}")
 
