@@ -104,7 +104,7 @@ def fig_validation(layer_bdb, layer_fab):
         keys = ["direct_rdf", "shacl_http_miss", "shacl_delta_hit", "value_change_miss"]
         labels = ["Direct", "SHACL miss", "$\\Delta$ hit", "Value change"]
         colors = [DIRECT, SHACL, DELTA, RED]
-        xs, meds, lows, highs, cols, labs = [], [], [], [], [], []
+        xs, meds, lows, highs, cols, labs, below = [], [], [], [], [], [], []
         for key, lab, col in zip(keys, labels, colors):
             row = layer.get(key)
             if not row:
@@ -112,12 +112,20 @@ def fig_validation(layer_bdb, layer_fab):
             med = row.get("median") or (row.get("samples") or [0])[0]
             lo, hi = err_from(row)
             xs.append(len(xs))
-            meds.append(max(med, 0.001))
-            lows.append(min(lo, med * 0.999))
-            highs.append(hi)
+            # Fabric timestamps have 1 ms resolution, so a hit records as 0.
+            below.append(med <= 0)
+            meds.append(1.0 if med <= 0 else med)
+            lows.append(0 if med <= 0 else min(lo, med * 0.999))
+            highs.append(0 if med <= 0 else hi)
             cols.append(col)
             labs.append(lab)
-        ax.bar(xs, meds, color=cols, yerr=[lows, highs], capsize=3, width=0.7)
+        bars = ax.bar(xs, meds, color=cols, yerr=[lows, highs], capsize=3, width=0.7)
+        for bar, col, flag in zip(bars, cols, below):
+            if flag:
+                bar.set_facecolor("white")
+                bar.set_edgecolor(col)
+                bar.set_hatch("//")
+                ax.text(bar.get_x() + bar.get_width() / 2.0, 1.15, "<1 ms", ha="center", va="bottom", fontsize=8)
         ax.set_yscale("log")
         ax.set_xticks(xs)
         ax.set_xticklabels(labs, rotation=20, ha="right")
@@ -146,7 +154,8 @@ def fig_e2e(lan, wan, fabric):
     ax.set_xticklabels([PRETTY[m] for m in MODES])
     ax.set_ylabel("Full lifecycle (s)")
     ax.set_title("SmartChainDB, 4 validators (n=5)")
-    ax.legend(frameon=False, loc="lower right")
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.2)
+    ax.legend(frameon=False, loc="upper center", ncol=2)
 
     ax = axes[1]
     xs = []
@@ -372,10 +381,10 @@ def validation_split(campaign, layer):
     return out
 
 
-def fig_where(lan, wan, layer):
+def fig_where(lan, wan, layer_lan, layer_wan):
     fig, ax = plt.subplots(figsize=(6.6, 3.4))
     labels, val, rest, cols = [], [], [], []
-    for name, campaign in (("LAN", lan), ("WAN", wan)):
+    for name, campaign, layer in (("LAN", lan, layer_lan), ("WAN", wan, layer_wan or layer_lan)):
         split = validation_split(campaign, layer)
         for mode in MODES:
             if mode not in split:
@@ -426,7 +435,8 @@ def main():
     fig_load(lan, wan, fabric)
     fig_wan(lan, wan)
     fig_cpu(args.lan)
-    fig_where(lan, wan, layer_bdb)
+    layer_wan = (load(args.wan, "bdb_%s_delta_val.json" % args.wan) or {}).get("validation_layer") or {}
+    fig_where(lan, wan, layer_bdb, layer_wan)
     print("figures in", OUT)
 
 
