@@ -4,5 +4,6 @@ n3/
 n4/
 peers.env
 hosts.lan.env
+hosts.wan.env
 hosts.map
 node/
