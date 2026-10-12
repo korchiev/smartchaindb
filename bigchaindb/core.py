@@ -7,7 +7,9 @@
 with Tendermint.
 """
 from bigchaindb.common.transaction import Transaction
+import json
 import logging
+import os
 import sys
 
 from abci.application import BaseApplication
@@ -26,6 +28,29 @@ from bigchaindb.utils import log_metric
 
 CodeTypeError = 1
 logger = logging.getLogger(__name__)
+
+
+def _apply_shacl_stats_reset():
+    try:
+        from bigchaindb.common.shacl_validator import ABCI_RESET_PATH, get_shacl_validator
+
+        if os.path.exists(ABCI_RESET_PATH):
+            os.remove(ABCI_RESET_PATH)
+            get_shacl_validator().reset_stats()
+    except Exception:
+        logger.debug("SHACL+Δ ABCI stats reset skipped", exc_info=True)
+
+
+def _export_shacl_stats():
+    try:
+        from bigchaindb.common.shacl_validator import ABCI_STATS_PATH, get_shacl_validator
+
+        tmp = ABCI_STATS_PATH + ".tmp"
+        with open(tmp, "w") as handle:
+            json.dump(get_shacl_validator().stats_snapshot(), handle)
+        os.replace(tmp, ABCI_STATS_PATH)
+    except Exception:
+        logger.debug("SHACL+Δ ABCI stats export skipped", exc_info=True)
 
 
 class App(BaseApplication):
@@ -155,6 +180,7 @@ class App(BaseApplication):
         self.abort_if_abci_chain_is_not_synced()
 
         logger.debug("check_tx: %s", raw_transaction)
+        _apply_shacl_stats_reset()
         transaction = decode_transaction(raw_transaction)
         if self.bigchaindb.is_valid_transaction(transaction):
             logger.debug("check_tx: VALID")
@@ -303,6 +329,7 @@ class App(BaseApplication):
                 )
 
         logger.debug(f"Validator updates: {validator_update}")
+        _export_shacl_stats()
         return self.abci.ResponseEndBlock(validator_updates=validator_update)
 
     def commit(self):

@@ -28,6 +28,13 @@ REQUIRED_SHAPES = frozenset({
 })
 
 
+# The consensus (ABCI) process and the HTTP worker each hold their own
+# SHACL+Δ cache. The ABCI side publishes its counters through this file so
+# the HTTP stats endpoint can report both.
+ABCI_STATS_PATH = os.environ.get("BIGCHAINDB_SHACL_ABCI_STATS", "/tmp/shacl_abci_stats.json")
+ABCI_RESET_PATH = ABCI_STATS_PATH + ".reset"
+
+
 def _bool_env(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -172,6 +179,18 @@ class SHACLValidatorClient:
         with self._shapes_lock:
             self._loaded_shapes = None
     
+    def stats_snapshot(self) -> Dict[str, Any]:
+        return {
+            "enabled": bool(self.enabled),
+            "cache_enabled": bool(self.cache_enabled),
+            "cache": self.delta_cache.stats(),
+            "conflict": self.conflict_table.stats(),
+        }
+
+    def reset_stats(self) -> None:
+        self.delta_cache.clear()
+        self.conflict_table.clear()
+
     def on_tx_committed(self, tx_dict: Dict[str, Any]) -> int:
         """Drop cached verdicts and abort in-flight validations that share deps."""
         self.conflict_table.on_tx_committed(tx_dict)

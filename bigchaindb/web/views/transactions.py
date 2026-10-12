@@ -61,7 +61,7 @@ class TransactionValidateApi(Resource):
         """
         pool = current_app.config["bigchain_pool"]
 
-        error, tx, tx_obj = validate_schema_definition(request)
+        error, tx, tx_obj = validate_schema_definition(request.get_json(force=True))
 
         if error is not None:
             return error

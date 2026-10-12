@@ -38,21 +38,30 @@ class ShaclStatsApi(Resource):
     """Eval scrape of in-process SHACL+Δ / conflict counters (one gunicorn worker)."""
 
     def get(self):
+        import json
         from flask import request
-        from bigchaindb.common.shacl_validator import get_shacl_validator
+        from bigchaindb.common.shacl_validator import (
+            ABCI_RESET_PATH,
+            ABCI_STATS_PATH,
+            get_shacl_validator,
+        )
 
         validator = get_shacl_validator()
         reset = str(request.args.get("reset") or "").strip().lower() in ("1", "true", "yes")
         if reset:
-            validator.delta_cache.clear()
-            validator.conflict_table.clear()
-        return flask.jsonify({
-            "enabled": bool(validator.enabled),
-            "cache_enabled": bool(validator.cache_enabled),
-            "reset": reset,
-            "cache": validator.delta_cache.stats(),
-            "conflict": validator.conflict_table.stats(),
-        })
+            validator.reset_stats()
+            with open(ABCI_RESET_PATH, "w") as handle:
+                handle.write("1")
+        abci = None
+        try:
+            with open(ABCI_STATS_PATH) as handle:
+                abci = json.load(handle)
+        except (OSError, ValueError):
+            abci = None
+        body = validator.stats_snapshot()
+        body["reset"] = reset
+        body["abci"] = abci
+        return flask.jsonify(body)
 
 
 def get_api_v1_info(api_prefix):

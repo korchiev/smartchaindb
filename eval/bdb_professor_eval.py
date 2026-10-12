@@ -69,7 +69,7 @@ def wait_api():
     last = None
     for _ in range(40):
         try:
-            resp = requests.get("http://127.0.0.1:9984/", timeout=3)
+            resp = requests.get(API.rsplit("/api/", 1)[0] + "/", timeout=3)
             if resp.status_code < 500:
                 return
             last = resp.status_code
@@ -436,8 +436,10 @@ def run_mix_shared(n, mempool_recheck):
         escrow = generate_keypair()
         offer = make_offer(buyer, escrow, create_id, adv_id, "s{}".format(i))
         if mempool_recheck:
-            st1, ms1, _ = validate_http(offer)
-            st2, ms2, _ = validate_http(offer)
+            st1, ms1, r1 = validate_http(offer)
+            require_ok(st1, r1, "VALIDATE first")
+            st2, ms2, r2 = validate_http(offer)
+            require_ok(st2, r2, "VALIDATE second")
             validate_first.append(ms1)
             validate_second.append(ms2)
         st, ms, resp = post_tx(offer)
