@@ -7,11 +7,11 @@ IMAGE=tendermint/tendermint:v0.31.5
 for i in 1 2 3 4; do
   rm -rf "$HERE/n$i"
   mkdir -p "$HERE/n$i"
-  docker run --rm \
+  docker run --rm --user 0 \
     -v "$HERE/n$i:/tendermint" \
     --entrypoint tendermint \
     "$IMAGE" init
-  docker run --rm \
+  docker run --rm --user 0 \
     -v "$HERE/n$i:/tendermint" \
     --entrypoint tendermint \
     "$IMAGE" show_node_id > "$HERE/n$i/node_id"

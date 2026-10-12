@@ -75,6 +75,13 @@ def main():
             env_path = os.path.join(ROOT, "n%d" % i, "node.env")
             with open(env_path, "w") as f:
                 f.write("TM_PEERS=%s\nTM_EXTERNAL=%s:26656\n" % (",".join(peers), hosts[i]))
+            cfg_toml = os.path.join(ROOT, "n%d" % i, "config", "config.toml")
+            with open(cfg_toml) as f:
+                toml = f.read()
+            advertised = '%s:26656' % hosts[i]
+            toml = toml.replace('external_address = ""', 'external_address = "%s"' % advertised)
+            with open(cfg_toml, "w") as f:
+                f.write(toml)
     with open(os.path.join(ROOT, "peers.env"), "w") as f:
         f.write("\n".join(lines) + "\n")
 

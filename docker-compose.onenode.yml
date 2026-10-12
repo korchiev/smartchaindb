@@ -40,26 +40,6 @@ services:
       - /app/node_modules
     restart: always
 
-  tm:
-    image: tendermint/tendermint:v0.31.5
-    hostname: tm
-    entrypoint: ""
-    restart: always
-    volumes:
-      - ./docker/4node/node:/tendermint
-    ports:
-      - "26656:26656"
-      - "26657:26657"
-    command: >
-      sh -c "tendermint node
-      --consensus.create_empty_blocks=false
-      --proxy_app=tcp://bdb:26658
-      --p2p.laddr=tcp://0.0.0.0:26656
-      --rpc.laddr=tcp://0.0.0.0:26657
-      --p2p.persistent_peers=${TM_PEERS}
-      --p2p.external_address=tcp://${TM_EXTERNAL}
-      --p2p.pex=false"
-
   bdb:
     build:
       context: .
@@ -68,7 +48,6 @@ services:
     hostname: bdb
     depends_on:
       - mongo
-      - tm
       - shacl
     volumes:
       - ./bigchaindb:/usr/src/app/bigchaindb
