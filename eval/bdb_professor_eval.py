@@ -857,13 +857,22 @@ def _tampered(tx):
 
 
 def _bad_status_update(c):
-    body = make_update(c["seller"], c["adv_id"]).to_dict()
+    """Properly signed UPDATE_ADV whose status is outside the lifecycle
+    vocabulary (the client library refuses to build one, so mutate before
+    signing; sign() recomputes the id)."""
     tx = Transaction.update_adv(
         inputs=gen_input(c["seller"].public_key),
         advertisement_id=c["adv_id"],
-        metadata=dict(body["metadata"], status="BANANA"),
-    ).sign([c["seller"].private_key])
-    return tx
+        metadata={
+            "status": "OPEN",
+            "updater_public_key": c["seller"].public_key,
+            "price": "99.00",
+            "expiry_date": iso(NOW + timedelta(days=30)),
+            "requestCreationTimestamp": iso(NOW),
+        },
+    )
+    tx.metadata["status"] = "BANANA"
+    return tx.sign([c["seller"].private_key])
 
 
 def _wrong_updater(c):
@@ -1288,6 +1297,8 @@ def main():
         print("WROTE", args.out)
 
     wait_api()
+    import logging
+    logging.getLogger("bigchaindb").setLevel(logging.CRITICAL)  # rejections are expected; keep stdout readable
     if args.only_inprocess:
         payload = {"platform": "bigchaindb", "live_mode": args.live_mode, "started_unix": time.time(),
                    "n_val": N_VAL, "seq_reps": SEQ_REPS, "state_label": args.state_label}

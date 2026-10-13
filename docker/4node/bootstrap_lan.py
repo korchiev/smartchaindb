@@ -60,12 +60,18 @@ def do_req(method, path, body=None):
     data = None if body is None else json.dumps(body).encode()
     req = urllib.request.Request(API + path, data=data, method=method, headers={
         "Authorization": "Bearer " + token, "Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            raw = resp.read().decode()
-            return json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as exc:
-        raise SystemExit("HTTP %s %s %s\n%s" % (exc.code, method, path, exc.read().decode()))
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                raw = resp.read().decode()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as exc:
+            raise SystemExit("HTTP %s %s %s\n%s" % (exc.code, method, path, exc.read().decode()))
+        except (urllib.error.URLError, OSError) as exc:
+            if attempt == 3:
+                raise
+            print("DO API retry after:", exc, flush=True)
+            time.sleep(5 * (attempt + 1))
 
 
 def my_ip():
