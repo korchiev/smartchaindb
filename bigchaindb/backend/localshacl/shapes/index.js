@@ -10,6 +10,38 @@ import ParserN3 from '@rdfjs/parser-n3';
 import rdfDataset from '@rdfjs/dataset';
 import rdfDataModel from '@rdfjs/data-model';
 import mongodb from 'mongodb';
+import { AsyncLocalStorage } from 'async_hooks';
+
+const SHACL_DEBUG = /^(1|true|yes|on)$/i.test(process.env.SHACL_DEBUG || '');
+const dlog = (...args) => { if (SHACL_DEBUG) console.log(...args); };
+
+// Per-request read set: every MongoDB filter the state checks issue is
+// recorded so the validator can verify that the facts it read are covered by
+// the declared dependency projection (the SHACL+Δ cache key).
+const readSetStore = new AsyncLocalStorage();
+const HEX64 = /^[0-9a-f]{64}$/;
+
+function recordRead(collectionName, filter) {
+  const rs = readSetStore.getStore();
+  if (!rs) return;
+  rs.queries += 1;
+  rs.collections.add(collectionName);
+  const walk = (value) => {
+    if (Array.isArray(value)) { value.forEach(walk); return; }
+    if (value && typeof value === 'object') { Object.values(value).forEach(walk); return; }
+    if (typeof value === 'string' && HEX64.test(value)) rs.ids.add(value);
+  };
+  walk(filter);
+}
+
+function tracked(collectionName) {
+  const col = db.collection(collectionName);
+  return {
+    findOne: (filter, ...rest) => { recordRead(collectionName, filter); return col.findOne(filter, ...rest); },
+    find: (filter, ...rest) => { recordRead(collectionName, filter); return col.find(filter, ...rest); },
+    countDocuments: (filter, ...rest) => { recordRead(collectionName, filter); return col.countDocuments(filter, ...rest); },
+  };
+}
 
 const { MongoClient } = mongodb;
 
@@ -167,7 +199,7 @@ function extractTransactionData(dataset) {
 }
 
 async function metadataFor(txId) {
-    const row = await db.collection('metadata').findOne({ id: txId });
+    const row = await tracked('metadata').findOne({ id: txId });
     return row && row.metadata ? row.metadata : null;
 }
 
@@ -213,7 +245,7 @@ async function validateStateConsistency(txData) {
         return errors;
     }
     
-    const transactions = db.collection('transactions');
+    const transactions = tracked('transactions');
     
     try {
         switch (txData.operation) {
@@ -264,10 +296,10 @@ async function validateStateConsistency(txData) {
  * Validate UPDATE_ADV transaction state
  */
 async function validateUpdateAdv(txData, transactions, errors) {
-    console.log('Validating UPDATE_ADV transaction:', txData.id);
+    dlog('Validating UPDATE_ADV transaction:', txData.id);
     const advertisementId = txData.asset.data.id;
     if (!advertisementId) {
-        console.log('ERROR: asset.data.id is missing');
+        dlog('ERROR: asset.data.id is missing');
         errors.push({
             message: ['asset.data.id is required for UPDATE_ADV'],
             path: 'http://bigchaindb.com/ns#id',
@@ -279,7 +311,7 @@ async function validateUpdateAdv(txData, transactions, errors) {
 
     const adv = await transactions.findOne({ id: advertisementId, operation: 'ADVERTISEMENT' });
     if (!adv) {
-        console.log('ERROR: Advertisement not found:', advertisementId);
+        dlog('ERROR: Advertisement not found:', advertisementId);
         errors.push({
             message: [`Advertisement '${advertisementId}' does not exist`],
             path: 'http://bigchaindb.com/ns#id',
@@ -290,14 +322,14 @@ async function validateUpdateAdv(txData, transactions, errors) {
     }
 
     // Owner check: updater must match advertiser
-    const advMeta = await db.collection('metadata').findOne({ id: advertisementId });
+    const advMeta = await tracked('metadata').findOne({ id: advertisementId });
     const advertiser = advMeta && advMeta.metadata && (advMeta.metadata.advertiser_public_key || advMeta.metadata.seller_public_key);
     const inputOwner = (txData.inputs && txData.inputs[0] && txData.inputs[0].owners_before && txData.inputs[0].owners_before[0]) || null;
-    console.log('Advertisement metadata:', advMeta);
-    console.log('Advertiser:', advertiser);
-    console.log('Input owner:', inputOwner);
+    dlog('Advertisement metadata:', advMeta);
+    dlog('Advertiser:', advertiser);
+    dlog('Input owner:', inputOwner);
     if (!inputOwner || !advertiser || inputOwner !== advertiser) {
-        console.log('ERROR: Owner mismatch');
+        dlog('ERROR: Owner mismatch');
         errors.push({
             message: ['Only the advertiser can update the advertisement'],
             path: 'http://bigchaindb.com/ns#updater_public_key',
@@ -464,11 +496,11 @@ async function validateBuyOffer(txData, transactions, errors) {
  * Validate SELL transaction state
  */
 async function validateSell(txData, transactions, errors) {
-    console.log('Validating SELL transaction:', txData.id);
+    dlog('Validating SELL transaction:', txData.id);
     const buyOfferId = txData.asset.data.buy_offer_id;
     
     if (!buyOfferId) {
-        console.log('ERROR: buy_offer_id is missing');
+        dlog('ERROR: buy_offer_id is missing');
         errors.push({
             message: ['buy_offer_id is required in asset data'],
             path: 'http://bigchaindb.com/ns#buy_offer_id',
@@ -485,7 +517,7 @@ async function validateSell(txData, transactions, errors) {
     });
     
     if (!buyOffer) {
-        console.log('ERROR: Buy offer not found:', buyOfferId);
+        dlog('ERROR: Buy offer not found:', buyOfferId);
         errors.push({
             message: [`Buy offer with id '${buyOfferId}' does not exist`],
             path: 'http://bigchaindb.com/ns#buy_offer_id',
@@ -495,10 +527,10 @@ async function validateSell(txData, transactions, errors) {
         return;
     }
     
-    console.log('Buy offer found:', buyOffer.id);
+    dlog('Buy offer found:', buyOffer.id);
     
     // Get buy offer metadata from separate collection
-    const buyOfferMetadata = await db.collection('metadata').findOne({
+    const buyOfferMetadata = await tracked('metadata').findOne({
         id: buyOfferId
     });
     
@@ -594,11 +626,11 @@ async function validateTransfer(txData, transactions, errors) {
  * Validate REQUEST_RETURN transaction state
  */
 async function validateRequestReturn(txData, transactions, errors) {
-    console.log('Validating REQUEST_RETURN transaction:', txData.id);
+    dlog('Validating REQUEST_RETURN transaction:', txData.id);
     const sellTransactionId = txData.asset.data.sell_transaction_id;
     
     if (!sellTransactionId) {
-        console.log('ERROR: sell_transaction_id is missing');
+        dlog('ERROR: sell_transaction_id is missing');
         errors.push({
             message: ['sell_transaction_id is required in asset'],
             path: 'http://bigchaindb.com/ns#sell_transaction_id',
@@ -615,7 +647,7 @@ async function validateRequestReturn(txData, transactions, errors) {
     });
     
     if (!sellTransaction) {
-        console.log('ERROR: Sell transaction not found:', sellTransactionId);
+        dlog('ERROR: Sell transaction not found:', sellTransactionId);
         errors.push({
             message: [`Sell transaction with id '${sellTransactionId}' does not exist`],
             path: 'http://bigchaindb.com/ns#sell_transaction_id',
@@ -625,15 +657,15 @@ async function validateRequestReturn(txData, transactions, errors) {
         return;
     }
     
-    console.log('Sell transaction found:', sellTransaction.id);
+    dlog('Sell transaction found:', sellTransaction.id);
     
     // Get sell transaction metadata
-    const sellMetadata = await db.collection('metadata').findOne({
+    const sellMetadata = await tracked('metadata').findOne({
         id: sellTransactionId
     });
     
     if (!sellMetadata || !sellMetadata.metadata) {
-        console.log('ERROR: Sell transaction metadata not found for:', sellTransactionId);
+        dlog('ERROR: Sell transaction metadata not found for:', sellTransactionId);
         errors.push({
             message: [`Sell transaction '${sellTransactionId}' has no metadata`],
             path: 'http://bigchaindb.com/ns#sell_transaction_id',
@@ -653,10 +685,10 @@ async function validateRequestReturn(txData, transactions, errors) {
         const saleDate = new Date(saleTimestamp);
         const daysDiff = (requestDate - saleDate) / (1000 * 60 * 60 * 24);
         
-        console.log('Return request days after sale:', daysDiff, 'Window:', returnWindowDays);
+        dlog('Return request days after sale:', daysDiff, 'Window:', returnWindowDays);
         
         if (daysDiff > returnWindowDays) {
-            console.log('ERROR: Return request exceeds return window');
+            dlog('ERROR: Return request exceeds return window');
             errors.push({
                 message: [`Return request is ${daysDiff.toFixed(1)} days after sale, exceeds ${returnWindowDays} day window`],
                 path: 'http://bigchaindb.com/ns#return_request_timestamp',
@@ -673,7 +705,7 @@ async function validateRequestReturn(txData, transactions, errors) {
     });
     
     if (existingReturnRequest && existingReturnRequest.id !== txData.id) {
-        console.log('ERROR: Return request already exists for sell transaction:', sellTransactionId);
+        dlog('ERROR: Return request already exists for sell transaction:', sellTransactionId);
         errors.push({
             message: [`A return request already exists for sell transaction '${sellTransactionId}'`],
             path: 'http://bigchaindb.com/ns#sell_transaction_id',
@@ -687,11 +719,11 @@ async function validateRequestReturn(txData, transactions, errors) {
  * Validate SELLER_ACCEPT_RETURN transaction state
  */
 async function validateSellerAcceptReturn(txData, transactions, errors) {
-    console.log('Validating SELLER_ACCEPT_RETURN transaction:', txData.id);
+    dlog('Validating SELLER_ACCEPT_RETURN transaction:', txData.id);
     const requestReturnId = txData.asset.data.request_return_id;
     
     if (!requestReturnId) {
-        console.log('ERROR: request_return_id is missing');
+        dlog('ERROR: request_return_id is missing');
         errors.push({
             message: ['request_return_id is required in asset'],
             path: 'http://bigchaindb.com/ns#request_return_id',
@@ -708,7 +740,7 @@ async function validateSellerAcceptReturn(txData, transactions, errors) {
     });
     
     if (!requestReturnTransaction) {
-        console.log('ERROR: REQUEST_RETURN transaction not found:', requestReturnId);
+        dlog('ERROR: REQUEST_RETURN transaction not found:', requestReturnId);
         errors.push({
             message: [`REQUEST_RETURN transaction with id '${requestReturnId}' does not exist`],
             path: 'http://bigchaindb.com/ns#request_return_id',
@@ -718,15 +750,15 @@ async function validateSellerAcceptReturn(txData, transactions, errors) {
         return;
     }
     
-    console.log('REQUEST_RETURN transaction found:', requestReturnTransaction.id);
+    dlog('REQUEST_RETURN transaction found:', requestReturnTransaction.id);
     
     // Get REQUEST_RETURN metadata
-    const requestReturnMetadata = await db.collection('metadata').findOne({
+    const requestReturnMetadata = await tracked('metadata').findOne({
         id: requestReturnId
     });
     
     if (!requestReturnMetadata || !requestReturnMetadata.metadata) {
-        console.log('ERROR: REQUEST_RETURN metadata not found for:', requestReturnId);
+        dlog('ERROR: REQUEST_RETURN metadata not found for:', requestReturnId);
         errors.push({
             message: [`REQUEST_RETURN transaction '${requestReturnId}' has no metadata`],
             path: 'http://bigchaindb.com/ns#request_return_id',
@@ -743,7 +775,7 @@ async function validateSellerAcceptReturn(txData, transactions, errors) {
     });
     
     if (existingSellerAcceptReturn && existingSellerAcceptReturn.id !== txData.id) {
-        console.log('ERROR: SELLER_ACCEPT_RETURN already exists for REQUEST_RETURN:', requestReturnId);
+        dlog('ERROR: SELLER_ACCEPT_RETURN already exists for REQUEST_RETURN:', requestReturnId);
         errors.push({
             message: [`A SELLER_ACCEPT_RETURN already exists for REQUEST_RETURN '${requestReturnId}'`],
             path: 'http://bigchaindb.com/ns#request_return_id',
@@ -797,14 +829,19 @@ app.get('/', (req, res) => {
 });
 
 // Validation endpoint
+
 app.post('/validate', async (req, res) => {
   const { shapeType, data } = req.body;
+  const tStart = process.hrtime.bigint();
+  const msSince = (t) => Number(process.hrtime.bigint() - t) / 1e6;
 
-  console.log('=== SHACL Validation Request ===');
-  console.log('Shape Type:', shapeType);
-  console.log('RDF Data received:');
-  console.log(data);
-  console.log('================================');
+  if (SHACL_DEBUG) {
+    console.log('=== SHACL Validation Request ===');
+    console.log('Shape Type:', shapeType);
+    console.log('RDF Data received:');
+    console.log(data);
+    console.log('================================');
+  }
 
   if (!shapeType || !data) {
     return res.status(400).json({ error: 'Request body must contain "shapeType" and "data" properties.' });
@@ -823,17 +860,23 @@ app.post('/validate', async (req, res) => {
     // ═══════════════════════════════════════════════════════
     // Phase 1: SHACL Syntactic & Semantic Validation
     // ═══════════════════════════════════════════════════════
+    const tParse = process.hrtime.bigint();
     const dataDataset = await parseTurtle(data);
+    const parseMs = msSince(tParse);
     
-    console.log('=== Parsed RDF Dataset ===');
-    console.log('Dataset size:', dataDataset.size);
-    for (const quad of dataDataset) {
-      console.log(`Subject: ${quad.subject.value}, Predicate: ${quad.predicate.value}, Object: ${quad.object.value}`);
+    if (SHACL_DEBUG) {
+      console.log('=== Parsed RDF Dataset ===');
+      console.log('Dataset size:', dataDataset.size);
+      for (const quad of dataDataset) {
+        console.log(`Subject: ${quad.subject.value}, Predicate: ${quad.predicate.value}, Object: ${quad.object.value}`);
+      }
+      console.log('==========================');
     }
-    console.log('==========================');
     
+    const tShacl = process.hrtime.bigint();
     const validator = new Validator(shapesDataset, { factory: rdfDataModel });
     const report = await validator.validate({ dataset: dataDataset });
+    const shaclMs = msSince(tShacl);
 
     let results = report.results.map(result => ({
         message: result.message.map(m => m.value),
@@ -850,9 +893,13 @@ app.post('/validate', async (req, res) => {
     // ═══════════════════════════════════════════════════════
     // Phase 2: State Consistency Validation (MongoDB)
     // ═══════════════════════════════════════════════════════
+    let stateMs = 0;
+    const readSet = { ids: new Set(), queries: 0, collections: new Set() };
     if (conforms && db) {
+        const tState = process.hrtime.bigint();
         const txData = extractTransactionData(dataDataset);
-        const stateErrors = await validateStateConsistency(txData);
+        const stateErrors = await readSetStore.run(readSet, () => validateStateConsistency(txData));
+        stateMs = msSince(tState);
         
         if (stateErrors.length > 0) {
             results = results.concat(stateErrors);
@@ -866,6 +913,17 @@ app.post('/validate', async (req, res) => {
       validation_phases: {
           shacl: 'completed',
           state: db ? 'completed' : 'skipped'
+      },
+      read_set: {
+          tx_ids: [...readSet.ids],
+          queries: readSet.queries,
+          collections: [...readSet.collections]
+      },
+      timings_ms: {
+          parse: parseMs,
+          shacl: shaclMs,
+          state: stateMs,
+          total: msSince(tStart)
       }
     });
 

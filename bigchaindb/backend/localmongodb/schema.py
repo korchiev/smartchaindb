@@ -31,6 +31,19 @@ INDEXES = {
             ],
             dict(name="inputs"),
         ),
+        # Marketplace reference lookups used by the state checks and by the
+        # SHACL+Δ dependency projection (exclusivity and UPDATE_ADV chains).
+        # Without them these are collection scans that grow with ledger size.
+        ([("operation", ASCENDING), ("asset.data.advertisement_id", ASCENDING)],
+         dict(name="mk_advertisement_ref")),
+        ([("operation", ASCENDING), ("asset.data.buy_offer_id", ASCENDING)],
+         dict(name="mk_buy_offer_ref")),
+        ([("operation", ASCENDING), ("asset.data.sell_transaction_id", ASCENDING)],
+         dict(name="mk_sell_ref")),
+        ([("operation", ASCENDING), ("asset.data.request_return_id", ASCENDING)],
+         dict(name="mk_request_return_ref")),
+        ([("operation", ASCENDING), ("asset.data.id", ASCENDING)],
+         dict(name="mk_update_adv_ref")),
     ],
     "assets": [
         ("id", dict(name="asset_id", unique=True)),

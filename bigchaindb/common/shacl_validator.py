@@ -42,6 +42,56 @@ def _bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
+class PhaseTimer(object):
+    """Per-phase wall-clock samples (ms) for the validation path.
+
+    Phases recorded by this process: dep_fetch (read referenced txs and hash
+    their values), cache_lookup, rdf (JSON to Turtle), http (round-trip to the
+    engine), direct (imperative validation). Phases reported by the engine:
+    engine_parse, engine_shacl, engine_state, engine_total.
+    """
+
+    MAX_SAMPLES = 5000
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._samples: Dict[str, List[float]] = {}
+        self._count: Dict[str, int] = {}
+        self._sum: Dict[str, float] = {}
+
+    def record(self, phase: str, ms: float) -> None:
+        with self._lock:
+            self._count[phase] = self._count.get(phase, 0) + 1
+            self._sum[phase] = self._sum.get(phase, 0.0) + ms
+            bucket = self._samples.setdefault(phase, [])
+            if len(bucket) < self.MAX_SAMPLES:
+                bucket.append(ms)
+
+    def snapshot(self, with_samples: bool = False) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        with self._lock:
+            for phase, count in self._count.items():
+                samples = sorted(self._samples.get(phase, []))
+                row: Dict[str, Any] = {
+                    "n": count,
+                    "mean": self._sum[phase] / count if count else 0.0,
+                }
+                if samples:
+                    row["median"] = samples[len(samples) // 2]
+                    row["p95"] = samples[min(len(samples) - 1, int(round(0.95 * (len(samples) - 1))))]
+                    row["max"] = samples[-1]
+                if with_samples:
+                    row["samples"] = list(self._samples.get(phase, []))
+                out[phase] = row
+        return out
+
+    def clear(self) -> None:
+        with self._lock:
+            self._samples.clear()
+            self._count.clear()
+            self._sum.clear()
+
+
 class SHACLValidatorClient:
     """
     Client for communicating with the SHACL validation microservice.
@@ -102,11 +152,20 @@ class SHACLValidatorClient:
             "BIGCHAINDB_SHACL_CACHE",
             shacl_config.get("cache_enabled", True),
         )
+        self.cache_policy = (
+            os.environ.get("BIGCHAINDB_SHACL_CACHE_POLICY")
+            or shacl_config.get("cache_policy")
+            or "delta"
+        ).strip().lower()
         self.delta_cache = SHACLDeltaCache(
             max_size=int(shacl_config.get("cache_max_size", 2048)),
             ttl=shacl_config.get("cache_ttl"),
+            policy=self.cache_policy,
         )
         self.conflict_table = ConflictTable()
+        self.timing = PhaseTimer()
+        self._readset_lock = threading.Lock()
+        self._reset_readset()
 
         if self.enabled:
             mode = "fail-open" if self.fail_open else "fail-closed"
@@ -179,17 +238,69 @@ class SHACLValidatorClient:
         with self._shapes_lock:
             self._loaded_shapes = None
     
-    def stats_snapshot(self) -> Dict[str, Any]:
+    def stats_snapshot(self, with_samples: bool = False) -> Dict[str, Any]:
         return {
             "enabled": bool(self.enabled),
             "cache_enabled": bool(self.cache_enabled),
+            "cache_policy": self.delta_cache.policy,
             "cache": self.delta_cache.stats(),
+            "cache_memory": self.delta_cache.memory_estimate(),
             "conflict": self.conflict_table.stats(),
+            "timing": self.timing.snapshot(with_samples=with_samples),
+            "read_set": self.readset_snapshot(),
         }
+
+    def _reset_readset(self) -> None:
+        self.readset_checks = 0
+        self.readset_uncovered = 0
+        self.readset_queries = 0
+        self.readset_samples: List[Dict[str, Any]] = []
+
+    def readset_snapshot(self) -> Dict[str, Any]:
+        with self._readset_lock:
+            return {
+                "checks": self.readset_checks,
+                "uncovered": self.readset_uncovered,
+                "queries": self.readset_queries,
+                "samples": list(self.readset_samples),
+            }
 
     def reset_stats(self) -> None:
         self.delta_cache.clear()
         self.conflict_table.clear()
+        self.timing.clear()
+        with self._readset_lock:
+            self._reset_readset()
+
+    def record_timing(self, phase: str, ms: float) -> None:
+        self.timing.record(phase, ms)
+
+    def _check_read_set(
+        self,
+        operation: str,
+        tx_id: str,
+        read_set: Optional[Dict[str, Any]],
+        index_ids: List[str],
+        covered_ids: Optional[Set[str]],
+    ) -> None:
+        """Read-set coverage: every tx id the engine's state checks touched
+        must appear in the dependency projection that forms the cache key.
+        Otherwise a cached verdict could survive a change the checker would
+        have seen. Counted, sampled, and exported with the stats."""
+        if not isinstance(read_set, dict) or covered_ids is None:
+            return
+        touched = {t for t in (read_set.get("tx_ids") or []) if isinstance(t, str)}
+        touched.discard(tx_id)
+        declared = set(covered_ids) | set(index_ids)
+        uncovered = sorted(touched - declared)
+        with self._readset_lock:
+            self.readset_checks += 1
+            self.readset_queries += int(read_set.get("queries") or 0)
+            if uncovered:
+                self.readset_uncovered += 1
+                if len(self.readset_samples) < 20:
+                    self.readset_samples.append({"operation": operation, "tx": tx_id, "uncovered": uncovered[:5]})
+                logger.warning("SHACL+Δ read-set not covered for %s %s: %s", operation, tx_id, uncovered[:3])
 
     def on_tx_committed(self, tx_dict: Dict[str, Any]) -> int:
         """Drop cached verdicts and abort in-flight validations that share deps."""
@@ -203,6 +314,8 @@ class SHACLValidatorClient:
         tx_dict: Dict[str, Any],
         requestCreationTimestamp: Optional[str] = None,
         dep_state_hash: Optional[str] = None,
+        dep_ids: Optional[List[str]] = None,
+        covered_ids: Optional[Set[str]] = None,
     ) -> Tuple[bool, List[Dict[str, Any]]]:
         """
         Validate a transaction against SHACL shapes.
@@ -210,6 +323,10 @@ class SHACLValidatorClient:
         Args:
             tx_dict: Transaction dictionary
             requestCreationTimestamp: Optional timestamp string for metrics logging
+            dep_state_hash: SHACL+Δ cache key component (hash of the dependency projection)
+            dep_ids: entity ids to index the verdict under (direct + transitive deps)
+            covered_ids: every tx id the dependency projection mentions; the
+                engine's reported read set is checked against it
             
         Returns:
             Tuple of (conforms: bool, results: List[Dict])
@@ -228,7 +345,9 @@ class SHACLValidatorClient:
         tx_id = tx_dict.get('id', 'unknown')
 
         if self.cache_enabled and dep_state_hash is not None:
+            lookup_start = time.perf_counter()
             cached = self.delta_cache.get(tx_id, dep_state_hash)
+            self.timing.record("cache_lookup", (time.perf_counter() - lookup_start) * 1000.0)
             if cached is not None:
                 logger.debug(
                     "SHACL+Δ hit for %s %s dep=%s",
@@ -244,16 +363,18 @@ class SHACLValidatorClient:
         if not ok:
             return fail_response
 
-        self.conflict_table.begin(tx_id, dependency_ids(tx_dict))
+        index_ids = list(dep_ids) if dep_ids else dependency_ids(tx_dict)
+        self.conflict_table.begin(tx_id, index_ids)
         try:
             reason = self.conflict_table.abort_if_changed(tx_id)
             if reason:
                 return self._fail("SHACL+Δ conflict: {}".format(reason))
 
             # Convert transaction to Turtle RDF format (with timing)
-            conversion_start = time.time()
+            conversion_start = time.perf_counter()
             turtle_data = self._convert_to_turtle(tx_dict)
-            conversion_time_ms = (time.time() - conversion_start) * 1000
+            conversion_time_ms = (time.perf_counter() - conversion_start) * 1000
+            self.timing.record("rdf", conversion_time_ms)
             
             # Log actual conversion time (duration) to metrics
             if requestCreationTimestamp:
@@ -286,6 +407,7 @@ class SHACLValidatorClient:
             logger.debug(f"RDF Turtle data for {operation} transaction:\n{turtle_data}")
             
             # Call SHACL microservice
+            http_start = time.perf_counter()
             response = requests.post(
                 f'{self.endpoint}/validate',
                 json={
@@ -294,11 +416,17 @@ class SHACLValidatorClient:
                 },
                 timeout=self.timeout
             )
+            self.timing.record("http", (time.perf_counter() - http_start) * 1000.0)
             
             if response.status_code == 200:
                 result = response.json()
                 conforms = result.get('conforms', False)
                 results = result.get('results', [])
+                engine_timing = result.get('timings_ms') or {}
+                for phase in ('parse', 'shacl', 'state', 'total'):
+                    if isinstance(engine_timing.get(phase), (int, float)):
+                        self.timing.record("engine_" + phase, float(engine_timing[phase]))
+                self._check_read_set(operation, tx_id, result.get('read_set'), index_ids, covered_ids)
                 
                 if not conforms:
                     logger.warning(
@@ -319,7 +447,7 @@ class SHACLValidatorClient:
                         dep_state_hash,
                         conforms,
                         results,
-                        dependency_ids(tx_dict),
+                        index_ids,
                     )
                 
                 return conforms, results
@@ -506,7 +634,7 @@ class SHACLValidatorClient:
         turtle = "    bdb:metadata [\n"
         
         # Debug: print metadata to see types
-        logger.info(f"DEBUG Metadata: {[(k, type(v).__name__, v) for k, v in metadata.items()]}")
+        logger.debug("Metadata: %s", [(k, type(v).__name__) for k, v in metadata.items()])
         
         for key, value in metadata.items():
             turtle += self._serialize_metadata_value(key, value, "        ")

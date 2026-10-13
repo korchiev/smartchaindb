@@ -8,6 +8,7 @@ dependency.
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
@@ -90,11 +91,54 @@ def _tx_as_dict(tx: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
+# Facts the state checker reads that are *not* stored on the dependency tx
+# itself: the exclusivity queries (one SELL per offer, one return request per
+# sale, one acceptance per request) and the open-advertisement uniqueness for
+# an asset. (operation of the dependency) -> (committed operation that would
+# change the fact, field that points back at the dependency).
+DERIVED_FACTS: Dict[str, Tuple[str, str]] = {
+    "BUY_OFFER": ("SELL", "asset.data.buy_offer_id"),
+    "SELL": ("REQUEST_RETURN", "asset.data.sell_transaction_id"),
+    "REQUEST_RETURN": ("SELLER_ACCEPT_RETURN", "asset.data.request_return_id"),
+}
+
+
+def _referencing_ids(bigchain: Any, operation: str, field: Any, value: str) -> Optional[List[str]]:
+    """Ids of committed ``operation`` txs whose ``field`` (or any of several
+    fields) equals ``value``; None when no database connection is available."""
+    conn = getattr(bigchain, "connection", None)
+    if conn is None:
+        return None
+    if isinstance(field, (list, tuple)):
+        flt = {"operation": operation, "$or": [{f: value} for f in field]}
+    else:
+        flt = {"operation": operation, field: value}
+    try:
+        cursor = conn.run(conn.collection("transactions").find(flt, {"id": 1, "_id": 0}))
+        return sorted(doc["id"] for doc in cursor if doc.get("id"))
+    except Exception as exc:  # pragma: no cover - backend specific
+        logger.debug("derived fact lookup failed: %s", exc)
+        return None
+
+
 def collect_dep_state(bigchain: Any, tx_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Load referenced txs and keep the fields that affect SHACL state checks."""
+    """Load referenced txs and keep the facts the SHACL state checks read.
+
+    For each dependency: its own operation/asset/metadata, plus the derived
+    facts (effective advertisement status, exclusivity counters, open ads on
+    the asset) that the sidecar queries. The cache key hashes this list, so a
+    verdict is reused only when every fact the checker read is unchanged.
+    """
     parts: List[Dict[str, Any]] = []
     getter = getattr(bigchain, "get_transaction", None)
-    for dep_id in dependency_ids(tx_dict):
+    tx_op = tx_dict.get("operation")
+    queue = list(dependency_ids(tx_dict))
+    seen: Set[str] = set()
+    while queue:
+        dep_id = queue.pop(0)
+        if dep_id in seen:
+            continue
+        seen.add(dep_id)
         raw = getter(dep_id) if getter else None
         dep = _tx_as_dict(raw)
         if dep is None:
@@ -106,14 +150,50 @@ def collect_dep_state(bigchain: Any, tx_dict: Dict[str, Any]) -> List[Dict[str, 
             "asset": dep.get("asset"),
             "metadata": dep.get("metadata"),
         }
-        if dep.get("operation") == "ADVERTISEMENT":
+        dep_op = dep.get("operation")
+        if dep_op == "ADVERTISEMENT":
             status_fn = getattr(bigchain, "get_effective_advertisement_status", None)
             if callable(status_fn):
                 part["effective_status"] = status_fn(dep.get("id") or dep_id)
             else:
                 part["effective_status"] = (dep.get("metadata") or {}).get("status")
+            # The checker derives the status from the UPDATE_ADV chain; list it
+            # so those reads are part of the projection.
+            part["update_ids"] = _referencing_ids(
+                bigchain, "UPDATE_ADV", ("asset.id", "asset.data.id"), dep_id)
+        if dep_op in DERIVED_FACTS:
+            op, field = DERIVED_FACTS[dep_op]
+            part["referenced_by"] = _referencing_ids(bigchain, op, field, dep_id)
+        if dep_op == "CREATE" and tx_op in ("ADVERTISEMENT", "TRANSFER"):
+            part["open_ads"] = _referencing_ids(bigchain, "ADVERTISEMENT", "asset.id", dep_id)
+        # Transitive dependency: a SELL's verdict also depends on the status
+        # of the advertisement its offer points at.
+        if dep_op == "BUY_OFFER" and tx_op == "SELL":
+            offer_data = _nested(dep, "asset", "data") or {}
+            adv_id = offer_data.get("advertisement_id") or (dep.get("asset") or {}).get("advertisement_id")
+            if isinstance(adv_id, str) and adv_id:
+                queue.append(adv_id)
         parts.append(part)
     return parts
+
+
+def dep_ids_from_parts(parts: List[Dict[str, Any]]) -> List[str]:
+    """Every entity id the projection covers (direct and transitive deps)."""
+    return [p["id"] for p in parts if isinstance(p.get("id"), str) and p["id"]]
+
+
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
+def projection_ids(parts: List[Dict[str, Any]]) -> Set[str]:
+    """All transaction ids mentioned anywhere in the dependency projection."""
+    return set(_HEX64.findall(json.dumps(parts, sort_keys=True, default=str)))
+
+
+def compute_dep_state(bigchain: Any, tx_dict: Dict[str, Any]) -> Tuple[str, List[str], Set[str]]:
+    """(dependency hash, dependency ids to index under, ids covered by the projection)."""
+    parts = collect_dep_state(bigchain, tx_dict)
+    return hash_dep_state(parts), dep_ids_from_parts(parts), projection_ids(parts)
 
 
 def hash_dep_state(parts: List[Dict[str, Any]]) -> str:
@@ -125,30 +205,71 @@ def compute_dep_state_hash(bigchain: Any, tx_dict: Dict[str, Any]) -> str:
     return hash_dep_state(collect_dep_state(bigchain, tx_dict))
 
 
-class SHACLDeltaCache:
-    """In-process memo of SHACL verdicts keyed by tx id × dependency values."""
+POLICIES = ("delta", "entity", "flush")
 
-    def __init__(self, max_size: int = 2048, ttl: Optional[float] = None):
+
+class SHACLDeltaCache:
+    """In-process memo of SHACL verdicts keyed by tx id × dependency values.
+
+    ``policy`` selects the invalidation baseline the evaluation compares:
+
+    * ``delta``  (default): key is (tx id, hash of dependency *values*); a
+      commit drops entries indexed under its affected entity ids.
+    * ``entity``: like ``delta`` for invalidation, but the lookup ignores the
+      dependency hash, so a verdict is reused whenever *any* verdict for the
+      tx id exists. Sound only where every relevant commit reaches
+      ``on_tx_committed`` (the ABCI process); the web process never sees
+      commits, so this policy can serve stale verdicts there.
+    * ``flush``: a commit clears the whole cache.
+    """
+
+    def __init__(self, max_size: int = 2048, ttl: Optional[float] = None, policy: str = "delta"):
         self.max_size = max_size
         self.ttl = ttl
+        self.policy = policy if policy in POLICIES else "delta"
         self._store: Dict[Tuple[str, str], CacheEntry] = {}
         self._index: Dict[str, Set[Tuple[str, str]]] = {}
         self._lock = threading.Lock()
+        self._reset_counters_locked()
+
+    def _reset_counters_locked(self) -> None:
         self.hits = 0
+        # misses = cold_misses + dep_change_misses (+ ttl_expirations)
         self.misses = 0
+        self.cold_misses = 0          # no verdict for this tx id at all
+        self.dep_change_misses = 0    # verdict exists, but dependency values differ
+        self.ttl_expirations = 0
+        # invalidations = retirements + dep_invalidations
         self.invalidations = 0
+        self.retirements = 0          # committed tx's own verdict removed
+        self.dep_invalidations = 0    # another tx's verdict removed: a dependency changed
+        self.superseded = 0           # stale verdict replaced after a dep-change miss
+        self.evictions = 0            # capacity eviction
+        self.flushes = 0              # policy=flush: whole-cache clears on commit
+        self.entity_hash_mismatch_hits = 0  # policy=entity: reused despite changed dep values
 
     def get(self, tx_id: str, dep_hash: str) -> Optional[Tuple[bool, List[Dict[str, Any]]]]:
         key = (tx_id, dep_hash)
         with self._lock:
+            if self.policy == "entity":
+                # Entity-level baseline: any verdict for this tx id counts.
+                existing = self._index.get(tx_id)
+                if existing and key not in self._store:
+                    key = next(iter(existing))
+                    self.entity_hash_mismatch_hits += 1
             entry = self._store.get(key)
             if entry is None:
                 self.misses += 1
+                if self._index.get(tx_id):
+                    self.dep_change_misses += 1
+                else:
+                    self.cold_misses += 1
                 return None
             ts, conforms, results = entry
             if self.ttl is not None and (time.time() - ts) > self.ttl:
                 self._drop_locked(key)
                 self.misses += 1
+                self.ttl_expirations += 1
                 return None
             self.hits += 1
             return conforms, results
@@ -163,16 +284,23 @@ class SHACLDeltaCache:
     ) -> None:
         key = (tx_id, dep_hash)
         with self._lock:
+            # A tx id carries at most one verdict: drop any entry whose
+            # dependency hash no longer matches (it was already a dep-change miss).
+            for old in [k for k in self._index.get(tx_id, set()) if k != key]:
+                self._drop_locked(old)
+                self.superseded += 1
             if len(self._store) >= self.max_size and key not in self._store:
                 self._evict_one_locked()
+                self.evictions += 1
             self._store[key] = (time.time(), conforms, list(results))
             for entity in set(list(dep_ids) + [tx_id]):
                 if not entity:
                     continue
                 self._index.setdefault(entity, set()).add(key)
 
-    def invalidate_ids(self, entity_ids: Iterable[str]) -> int:
+    def invalidate_ids(self, entity_ids: Iterable[str], committed_tx_id: Optional[str] = None) -> int:
         removed = 0
+        retired = 0
         with self._lock:
             for entity in set(entity_ids):
                 if not entity:
@@ -182,31 +310,79 @@ class SHACLDeltaCache:
                     if key in self._store:
                         del self._store[key]
                         removed += 1
+                        if key[0] == committed_tx_id:
+                            retired += 1
                     self._forget_key_locked(key)
-        if removed:
             self.invalidations += removed
-            logger.debug("SHACL+Δ invalidated %s cache entries", removed)
+            self.retirements += retired
+            self.dep_invalidations += removed - retired
+        if removed:
+            logger.debug("SHACL+Δ removed %s cache entries (%s retired)", removed, retired)
         return removed
 
     def on_tx_committed(self, tx_dict: Dict[str, Any]) -> int:
-        return self.invalidate_ids(affected_ids(tx_dict))
+        if self.policy == "flush":
+            committed = tx_dict.get("id")
+            with self._lock:
+                removed = len(self._store)
+                retired = sum(1 for key in self._store if key[0] == committed)
+                self._store.clear()
+                self._index.clear()
+                self.flushes += 1
+                self.invalidations += removed
+                self.retirements += retired
+                self.dep_invalidations += removed - retired
+            return removed
+        return self.invalidate_ids(affected_ids(tx_dict), committed_tx_id=tx_dict.get("id"))
+
+    def memory_estimate(self) -> Dict[str, int]:
+        """Approximate resident bytes of the store and reverse index.
+
+        Serialized size of entries plus Python container overhead; an upper
+        bound on what the cache itself holds, not the interpreter's RSS.
+        """
+        import sys
+        with self._lock:
+            entries = len(self._store)
+            payload = 0
+            for key, (ts, conforms, results) in self._store.items():
+                payload += len(key[0]) + len(key[1]) + 8 + 1
+                payload += len(json.dumps(results, default=str)) if results else 0
+                payload += sys.getsizeof(key) + sys.getsizeof((ts, conforms, results))
+            index = sum(sys.getsizeof(k) + sys.getsizeof(v) + len(v) * 72 for k, v in self._index.items())
+            return {
+                "entries": entries,
+                "index_entities": len(self._index),
+                "store_bytes": payload + sys.getsizeof(self._store),
+                "index_bytes": index + sys.getsizeof(self._index),
+                "bytes_per_entry": int((payload + index) / entries) if entries else 0,
+            }
 
     def stats(self) -> Dict[str, int]:
         with self._lock:
             return {
+                "policy": self.policy,
                 "size": len(self._store),
+                "index_entities": len(self._index),
                 "hits": self.hits,
                 "misses": self.misses,
+                "cold_misses": self.cold_misses,
+                "dep_change_misses": self.dep_change_misses,
+                "ttl_expirations": self.ttl_expirations,
                 "invalidations": self.invalidations,
+                "retirements": self.retirements,
+                "dep_invalidations": self.dep_invalidations,
+                "superseded": self.superseded,
+                "evictions": self.evictions,
+                "flushes": self.flushes,
+                "entity_hash_mismatch_hits": self.entity_hash_mismatch_hits,
             }
 
     def clear(self) -> None:
         with self._lock:
             self._store.clear()
             self._index.clear()
-            self.hits = 0
-            self.misses = 0
-            self.invalidations = 0
+            self._reset_counters_locked()
 
     def _drop_locked(self, key: Tuple[str, str]) -> None:
         self._store.pop(key, None)

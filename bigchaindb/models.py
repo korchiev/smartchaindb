@@ -8,9 +8,10 @@ from bigchaindb.common.exceptions import InvalidSignature, DuplicateTransaction,
 from bigchaindb.common.schema import validate_transaction_schema
 from bigchaindb.common.transaction import Transaction
 from bigchaindb.common.utils import validate_txn_obj, validate_key
-from bigchaindb.common.shacl_delta import compute_dep_state_hash
+from bigchaindb.common.shacl_delta import compute_dep_state
 from bigchaindb.common.shacl_validator import get_shacl_validator
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -37,14 +38,20 @@ class Transaction(Transaction):
 
         shacl_validator = get_shacl_validator()
         if not shacl_validator.enabled:
-            return self._validate_direct(bigchain, current_transactions)
+            t0 = time.perf_counter()
+            try:
+                return self._validate_direct(bigchain, current_transactions)
+            finally:
+                shacl_validator.record_timing("direct", (time.perf_counter() - t0) * 1000.0)
         
         logger.debug(f"Validating {self.operation} transaction {self.id} via SHACL")
         
         tx_dict = self.to_dict()
-        dep_hash = compute_dep_state_hash(bigchain, tx_dict)
+        t0 = time.perf_counter()
+        dep_hash, dep_ids, covered = compute_dep_state(bigchain, tx_dict)
+        shacl_validator.record_timing("dep_fetch", (time.perf_counter() - t0) * 1000.0)
         conforms, results = shacl_validator.validate_transaction(
-            tx_dict, dep_state_hash=dep_hash
+            tx_dict, dep_state_hash=dep_hash, dep_ids=dep_ids, covered_ids=covered
         )
         
         if not conforms:
