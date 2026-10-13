@@ -2226,6 +2226,10 @@ class Transaction(object):
         if advertisement_tx.operation != 'ADVERTISEMENT':
             raise ValueError(f"Referenced transaction {advertisement_id} is not an advertisement")
 
+        ad_asset_id = (advertisement_tx.asset or {}).get("id")
+        if ad_asset_id and tx_asset_id and ad_asset_id != tx_asset_id:
+            raise ValueError("Buy offer asset does not match the advertisement's asset")
+
         ad_status = advertisement_tx.metadata.get('status')
         if hasattr(bigchain, 'get_effective_advertisement_status'):
             overlay = bigchain.get_effective_advertisement_status(advertisement_id)

@@ -167,6 +167,14 @@ class Transaction(Transaction):
             raise ValidationError("SELLER_ACCEPT_RETURN request does not exist")
         if getattr(req_tx, "operation", None) != self.REQUEST_RETURN:
             raise ValidationError("referenced transaction is not a REQUEST_RETURN")
+        req_asset = req_tx.asset or {}
+        req_data = req_asset.get("data") if isinstance(req_asset.get("data"), dict) else {}
+        sell_id = req_data.get("sell_transaction_id") or req_asset.get("sell_transaction_id")
+        sell_tx = bigchain.get_transaction(sell_id) if sell_id else None
+        acceptor = (self.metadata or {}).get("seller_public_key")
+        seller = (getattr(sell_tx, "metadata", None) or {}).get("seller_public_key")
+        if acceptor and seller and acceptor != seller:
+            raise ValidationError("only the seller of the sale can accept the return")
 
     @classmethod
     def from_dict(cls, tx_body):

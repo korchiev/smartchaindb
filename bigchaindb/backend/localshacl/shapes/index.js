@@ -441,6 +441,16 @@ async function validateBuyOffer(txData, transactions, errors) {
         return;
     }
     
+    const adAssetId = advertisement.asset && advertisement.asset.id;
+    if (adAssetId && txData.asset && txData.asset.id && txData.asset.id !== adAssetId) {
+        errors.push({
+            message: [`Buy offer asset does not match the advertisement's asset`],
+            path: 'http://bigchaindb.com/ns#advertisement_id',
+            focusNode: `urn:tx:${txData.id}`,
+            severity: 'Violation'
+        });
+    }
+
     const status = await latestAdvertisementStatus(advertisementId, transactions);
     if (status !== 'OPEN') {
         errors.push({
@@ -587,6 +597,17 @@ async function validateSell(txData, transactions, errors) {
     const offerData = offerAsset.data || {};
     const advertisementId = offerAsset.advertisement_id || offerData.advertisement_id;
     if (advertisementId) {
+        const adMetaForSell = await metadataFor(advertisementId);
+        const seller = txData.metadata && txData.metadata.seller_public_key;
+        const advertiser = adMetaForSell && adMetaForSell.advertiser_public_key;
+        if (seller && advertiser && seller !== advertiser) {
+            errors.push({
+                message: ['Seller must be the advertiser (current owner) of the asset'],
+                path: 'http://bigchaindb.com/ns#seller_public_key',
+                focusNode: `urn:tx:${txData.id}`,
+                severity: 'Violation'
+            });
+        }
         const adStatus = await latestAdvertisementStatus(advertisementId, transactions);
         if (adStatus === 'LOCKED' || adStatus === 'CLOSED') {
             errors.push({
@@ -675,6 +696,17 @@ async function validateRequestReturn(txData, transactions, errors) {
         return;
     }
     
+    const requester = txData.metadata && txData.metadata.requester_public_key;
+    const buyer = sellMetadata.metadata.buyer_public_key;
+    if (requester && buyer && requester !== buyer) {
+        errors.push({
+            message: ['Requester must be the buyer of the sale'],
+            path: 'http://bigchaindb.com/ns#requester_public_key',
+            focusNode: `urn:tx:${txData.id}`,
+            severity: 'Violation'
+        });
+    }
+
     // Check if return is within the return window
     const returnRequestTimestamp = txData.metadata.return_request_timestamp;
     const saleTimestamp = sellMetadata.metadata.sale_timestamp;
@@ -768,6 +800,23 @@ async function validateSellerAcceptReturn(txData, transactions, errors) {
         return;
     }
     
+    const returnAsset = requestReturnTransaction.asset || {};
+    const returnData = returnAsset.data || {};
+    const acceptedSellId = returnData.sell_transaction_id || returnAsset.sell_transaction_id;
+    if (acceptedSellId) {
+        const acceptedSellMeta = await tracked('metadata').findOne({ id: acceptedSellId });
+        const acceptor = txData.metadata && txData.metadata.seller_public_key;
+        const saleSeller = acceptedSellMeta && acceptedSellMeta.metadata && acceptedSellMeta.metadata.seller_public_key;
+        if (acceptor && saleSeller && acceptor !== saleSeller) {
+            errors.push({
+                message: ['Only the seller of the sale can accept the return'],
+                path: 'http://bigchaindb.com/ns#seller_public_key',
+                focusNode: `urn:tx:${txData.id}`,
+                severity: 'Violation'
+            });
+        }
+    }
+
     // Check if a SELLER_ACCEPT_RETURN already exists for this REQUEST_RETURN
     const existingSellerAcceptReturn = await transactions.findOne({
         operation: 'SELLER_ACCEPT_RETURN',
