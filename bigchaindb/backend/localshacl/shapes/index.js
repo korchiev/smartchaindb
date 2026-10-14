@@ -442,7 +442,10 @@ async function validateBuyOffer(txData, transactions, errors) {
     }
     
     const adAssetId = advertisement.asset && advertisement.asset.id;
-    if (adAssetId && txData.asset && txData.asset.id && txData.asset.id !== adAssetId) {
+    // The asset id arrives as bdb:id on the asset blank node, which the RDF
+    // extraction stores under asset.data.id.
+    const offerAssetId = txData.asset && (txData.asset.id || (txData.asset.data && txData.asset.data.id));
+    if (adAssetId && offerAssetId && offerAssetId !== adAssetId) {
         errors.push({
             message: [`Buy offer asset does not match the advertisement's asset`],
             path: 'http://bigchaindb.com/ns#advertisement_id',
