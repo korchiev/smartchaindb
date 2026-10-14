@@ -247,9 +247,15 @@ def up(validators):
 
 
 def restart_code(validators):
-    """After a code push: restart the containers that mount the tree."""
+    """After a code push: restart the containers that mount the tree.
+
+    Tendermint keeps a live ABCI socket to BigchainDB and does not reconnect
+    after that process restarts, so it has to be restarted too.
+    """
     for pub, _ in validators:
         ssh(pub, "docker restart scdb-node-shacl-1 scdb-node-bdb-1 >/dev/null && echo restarted $(hostname)")
+    for pub, _ in validators:
+        ssh(pub, "docker restart scdb-node-tm-1 >/dev/null && echo tm-restarted $(hostname)")
 
 
 def wait_ready(validators):
