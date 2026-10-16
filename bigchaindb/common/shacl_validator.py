@@ -282,13 +282,13 @@ class SHACLValidatorClient:
         read_set: Optional[Dict[str, Any]],
         index_ids: List[str],
         covered_ids: Optional[Set[str]],
-    ) -> None:
+    ) -> bool:
         """Read-set coverage: every tx id the engine's state checks touched
         must appear in the dependency projection that forms the cache key.
         Otherwise a cached verdict could survive a change the checker would
-        have seen. Counted, sampled, and exported with the stats."""
+        have seen. Return whether this evaluation is safe to cache."""
         if not isinstance(read_set, dict) or covered_ids is None:
-            return
+            return False
         touched = {t for t in (read_set.get("tx_ids") or []) if isinstance(t, str)}
         touched.discard(tx_id)
         declared = set(covered_ids) | set(index_ids)
@@ -301,6 +301,7 @@ class SHACLValidatorClient:
                 if len(self.readset_samples) < 20:
                     self.readset_samples.append({"operation": operation, "tx": tx_id, "uncovered": uncovered[:5]})
                 logger.warning("SHACL+Δ read-set not covered for %s %s: %s", operation, tx_id, uncovered[:3])
+        return not uncovered
 
     def on_tx_committed(self, tx_dict: Dict[str, Any]) -> int:
         """Drop cached verdicts and abort in-flight validations that share deps."""
@@ -426,7 +427,13 @@ class SHACLValidatorClient:
                 for phase in ('parse', 'shacl', 'state', 'total'):
                     if isinstance(engine_timing.get(phase), (int, float)):
                         self.timing.record("engine_" + phase, float(engine_timing[phase]))
-                self._check_read_set(operation, tx_id, result.get('read_set'), index_ids, covered_ids)
+                cacheable = self._check_read_set(
+                    operation,
+                    tx_id,
+                    result.get('read_set'),
+                    index_ids,
+                    covered_ids,
+                )
                 
                 if not conforms:
                     logger.warning(
@@ -441,7 +448,7 @@ class SHACLValidatorClient:
                 if reason:
                     return self._fail("SHACL+Δ conflict: {}".format(reason))
 
-                if self.cache_enabled and dep_state_hash is not None:
+                if self.cache_enabled and dep_state_hash is not None and cacheable:
                     self.delta_cache.put(
                         tx_id,
                         dep_state_hash,

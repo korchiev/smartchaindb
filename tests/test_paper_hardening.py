@@ -251,10 +251,14 @@ def _valid_buy_offer_tx() -> Dict[str, Any]:
 
 
 class TestValidateTransaction:
-    def _post_ok(self, conforms=True, results=None):
+    def _post_ok(self, conforms=True, results=None, read_set=None):
         resp = MagicMock()
         resp.status_code = 200
-        resp.json.return_value = {"conforms": conforms, "results": results or []}
+        resp.json.return_value = {
+            "conforms": conforms,
+            "results": results or [],
+            "read_set": read_set,
+        }
         return resp
 
     def test_disabled_client_skips_validation(self, monkeypatch):
@@ -281,9 +285,20 @@ class TestValidateTransaction:
     def test_delta_cache_skips_second_http_call(self, enabled_client):
         enabled_client.cache_enabled = True
         tx = _valid_buy_offer_tx()
-        with patch("requests.post", return_value=self._post_ok(True)) as post:
-            first = enabled_client.validate_transaction(tx, dep_state_hash="dep-open")
-            second = enabled_client.validate_transaction(tx, dep_state_hash="dep-open")
+        read_set = {"tx_ids": ["b" * 64], "queries": 1}
+        with patch("requests.post", return_value=self._post_ok(True, read_set=read_set)) as post:
+            first = enabled_client.validate_transaction(
+                tx,
+                dep_state_hash="dep-open",
+                dep_ids=["b" * 64],
+                covered_ids={"b" * 64},
+            )
+            second = enabled_client.validate_transaction(
+                tx,
+                dep_state_hash="dep-open",
+                dep_ids=["b" * 64],
+                covered_ids={"b" * 64},
+            )
         assert first == (True, [])
         assert second == (True, [])
         assert post.call_count == 1
@@ -292,6 +307,36 @@ class TestValidateTransaction:
             third = enabled_client.validate_transaction(tx, dep_state_hash="dep-open")
         assert third == (True, [])
         assert post2.call_count == 1
+
+    def test_uncovered_read_is_not_cached(self, enabled_client):
+        enabled_client.cache_enabled = True
+        tx = _valid_buy_offer_tx()
+        read_set = {"tx_ids": ["c" * 64], "queries": 1}
+        with patch("requests.post", return_value=self._post_ok(True, read_set=read_set)) as post:
+            for _ in range(2):
+                assert enabled_client.validate_transaction(
+                    tx,
+                    dep_state_hash="dep-open",
+                    dep_ids=["b" * 64],
+                    covered_ids={"b" * 64},
+                ) == (True, [])
+        assert post.call_count == 2
+        assert enabled_client.delta_cache.stats()["size"] == 0
+        assert enabled_client.readset_snapshot()["uncovered"] == 2
+
+    def test_missing_read_set_is_not_cached(self, enabled_client):
+        enabled_client.cache_enabled = True
+        tx = _valid_buy_offer_tx()
+        with patch("requests.post", return_value=self._post_ok(True)) as post:
+            for _ in range(2):
+                assert enabled_client.validate_transaction(
+                    tx,
+                    dep_state_hash="dep-open",
+                    dep_ids=["b" * 64],
+                    covered_ids={"b" * 64},
+                ) == (True, [])
+        assert post.call_count == 2
+        assert enabled_client.delta_cache.stats()["size"] == 0
 
     def test_conflict_aborts_during_http(self, enabled_client):
         enabled_client.cache_enabled = True
