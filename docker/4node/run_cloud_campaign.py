@@ -53,18 +53,66 @@ def load_hosts(path):
     return validators, client
 
 
-def run(ip, remote, timeout=None, check=True):
-    print("+", ip, remote[:160], flush=True)
-    proc = subprocess.run(SSH + ["root@" + ip, remote], timeout=timeout)
-    if check and proc.returncode != 0:
-        raise SystemExit("ssh %s failed (%s)" % (ip, proc.returncode))
-    return proc.returncode
+def run(ip, remote, timeout=None, check=True, retries=4):
+    """Run a remote command. Retry when SSH itself cannot connect, so a short
+    network blip does not abort a campaign that is still running remotely."""
+    last = None
+    for attempt in range(retries):
+        print("+", ip, remote[:160], flush=True)
+        try:
+            proc = subprocess.run(SSH + ["root@" + ip, remote], timeout=timeout)
+        except subprocess.TimeoutExpired:
+            last = "timeout"
+            print("ssh %s timed out, retry %d" % (ip, attempt + 1), flush=True)
+            time.sleep(5 * (attempt + 1))
+            continue
+        if proc.returncode == 0:
+            return 0
+        last = proc.returncode
+        if proc.returncode == 255 and attempt < retries - 1:
+            print("ssh %s connection failed, retry %d" % (ip, attempt + 1), flush=True)
+            time.sleep(5 * (attempt + 1))
+            continue
+        break
+    if check:
+        raise SystemExit("ssh %s failed (%s)" % (ip, last))
+    return 255 if last == "timeout" else last
 
 
 def fetch(ip, remote, local):
-    proc = subprocess.run(SCP + ["root@%s:%s" % (ip, remote), local])
-    if proc.returncode != 0:
-        raise SystemExit("scp from %s failed: %s" % (ip, remote))
+    for attempt in range(4):
+        proc = subprocess.run(SCP + ["root@%s:%s" % (ip, remote), local])
+        if proc.returncode == 0:
+            return
+        print("scp retry %d from %s: %s" % (attempt + 1, ip, remote), flush=True)
+        time.sleep(5 * (attempt + 1))
+    raise SystemExit("scp from %s failed: %s" % (ip, remote))
+
+
+def run_detached(ip, remote, log_remote, timeout, ok_marker="WROTE"):
+    """Start remote work in its own session and poll the log.
+
+    The campaign used to hold one SSH session open for the whole workload.
+    When that session dropped, the workload died with it. setsid keeps the
+    job running across a disconnect; the poll just waits for it to finish.
+    """
+    launch = ("rm -f %s; setsid nohup bash -c '%s' > %s 2>&1 < /dev/null & echo STARTED"
+              % (log_remote, remote.replace("'", "'\\''"), log_remote))
+    run(ip, launch, timeout=90)
+    deadline = time.time() + timeout
+    probe = ("if grep -q 'T''raceback' %s; then cat %s; exit 2; fi; "
+             "if grep -q %s %s; then exit 0; fi; exit 1"
+             % (log_remote, log_remote, ok_marker, log_remote))
+    while time.time() < deadline:
+        code = run(ip, probe, timeout=45, check=False)
+        if code == 0:
+            return
+        if code == 2:
+            raise SystemExit("remote command failed; log %s:%s" % (ip, log_remote))
+        if code == 255:
+            print("SSH_DOWN %s" % ip, flush=True)
+        time.sleep(15)
+    raise SystemExit("timed out waiting for %s:%s" % (ip, log_remote))
 
 
 def wait_ready(validators):
@@ -89,7 +137,8 @@ def switch_mode(validators, mode):
 
 def cpu_start(validators, tag):
     for v in validators:
-        run(v["public"], "rm -f /tmp/cpu_%s.csv; " % tag + CPU_LOOP.format(tag=tag), timeout=30)
+        run(v["public"], "kill $(cat /tmp/cpu_%s.pid) 2>/dev/null; rm -f /tmp/cpu_%s.csv; " % (tag, tag)
+            + CPU_LOOP.format(tag=tag), timeout=30)
 
 
 def cpu_stop(validators, tag, dest):
@@ -132,11 +181,14 @@ def inprocess(v1, env, tag, label=None, skip_sequence=False, dest=None):
     if skip_sequence:
         extra += " --skip-sequence"
     name = "%s_val%s.json" % (tag, ("_" + label) if label else "")
-    run(
+    run_detached(
         v1["public"],
         "docker exec %s -e BDB_API=http://127.0.0.1:9984/api/v1 scdb-node-bdb-1 %s --live-mode delta "
-        "--only-inprocess%s --out /tmp/%s && docker cp scdb-node-bdb-1:/tmp/%s /tmp/%s" % (env, DRIVER, extra, name, name, name),
-        timeout=5400,
+        "--only-inprocess%s --out /tmp/%s && docker cp scdb-node-bdb-1:/tmp/%s /tmp/%s && echo COPIED"
+        % (env, DRIVER, extra, name, name, name),
+        "/tmp/%s.log" % name,
+        5400,
+        ok_marker="COPIED",
     )
     fetch(v1["public"], "/tmp/%s" % name, os.path.join(dest, "bdb_" + name))
 
@@ -147,13 +199,13 @@ def engine_down(validators, client, env, api, tm_rpc, mode, tag, dest):
     name = "bdb_%s_engine_down.json" % tag
     run(client, "rm -f /root/out/engine_down.flag; " + client_cmd(env, api, tm_rpc, "--live-mode %s --only-engine-down" % mode, name, background=True), timeout=60)
     run(client, "for i in $(seq 1 120); do grep -q READY_FOR_ENGINE_DOWN /root/out/%s.log && exit 0; "
-                "grep -q Traceback /root/out/%s.log && cat /root/out/%s.log && exit 1; sleep 2; done; exit 1" % (name, name, name), timeout=300)
+                "grep -q 'T''raceback' /root/out/%s.log && cat /root/out/%s.log && exit 1; sleep 2; done; exit 1" % (name, name, name), timeout=300)
     try:
         for v in validators:
             run(v["public"], "docker stop scdb-node-shacl-1 >/dev/null && echo stopped $(hostname)", timeout=60)
         run(client, "touch /root/out/engine_down.flag", timeout=30)
         run(client, "for i in $(seq 1 300); do grep -q WROTE /root/out/%s.log && exit 0; "
-                    "grep -q Traceback /root/out/%s.log && cat /root/out/%s.log && exit 1; sleep 2; done; exit 1" % (name, name, name), timeout=700)
+                    "grep -q 'T''raceback' /root/out/%s.log && cat /root/out/%s.log && exit 1; sleep 2; done; exit 1" % (name, name, name), timeout=700)
         fetch(client, "/root/out/" + name, os.path.join(dest, name))
     finally:
         for v in validators:
@@ -169,13 +221,16 @@ def state_sweep(validators, env, tag, sizes, dest):
     try:
         for size in sizes:
             for v in validators:
-                run(v["public"], "docker exec scdb-node-bdb-1 %s --target %d" % (SEEDER, size), timeout=3600)
+                run_detached(v["public"], "docker exec scdb-node-bdb-1 %s --target %d && echo SEED_DONE" % (SEEDER, size),
+                             "/tmp/seed_state.log", 3600, ok_marker="SEED_DONE")
             inprocess(v1, env, tag, label="state%d" % size, skip_sequence=True, dest=dest)
             for v in validators:
-                run(v["public"], "docker exec scdb-node-bdb-1 %s --indexes off" % SEEDER, timeout=600)
+                run_detached(v["public"], "docker exec scdb-node-bdb-1 %s --indexes off && echo SEED_DONE" % SEEDER,
+                             "/tmp/seed_state.log", 600, ok_marker="SEED_DONE")
             inprocess(v1, env, tag, label="state%d_noidx" % size, skip_sequence=True, dest=dest)
             for v in validators:
-                run(v["public"], "docker exec scdb-node-bdb-1 %s --indexes on" % SEEDER, timeout=1800)
+                run_detached(v["public"], "docker exec scdb-node-bdb-1 %s --indexes on && echo SEED_DONE" % SEEDER,
+                             "/tmp/seed_state.log", 1800, ok_marker="SEED_DONE")
     finally:
         for v in validators:
             run(v["public"], "docker exec scdb-node-bdb-1 %s --reset --indexes on" % SEEDER, timeout=1800, check=False)
@@ -195,6 +250,10 @@ def run_mode(validators, client, mode, args, dest):
         fetch(client, "/root/out/bdb_%s.json" % tag, os.path.join(dest, "bdb_%s.json" % tag))
         return
 
+    if args.only_engine_down:
+        engine_down(validators, client, env, api, tm_rpc, mode, tag, dest)
+        return
+
     if mode == "delta" and not args.wan and not args.skip_inprocess:
         inprocess(v1, env, tag, dest=dest)
 
@@ -205,11 +264,12 @@ def run_mode(validators, client, mode, args, dest):
         flags.append("--skip-open-load")
     if args.wan:
         flags.append("--wan")
+    out_name = "bdb_%s.json" % tag
     cpu_start(validators, tag)
     try:
-        run(client, client_cmd(env, api, tm_rpc, "--live-mode %s %s" % (mode, " ".join(flags)), "bdb_%s.json" % tag),
-            timeout=14400)
-        fetch(client, "/root/out/bdb_%s.json" % tag, os.path.join(dest, "bdb_%s.json" % tag))
+        run_detached(client, client_cmd(env, api, tm_rpc, "--live-mode %s %s" % (mode, " ".join(flags)), out_name),
+                     "/root/out/%s.log" % out_name, 14400)
+        fetch(client, "/root/out/%s" % out_name, os.path.join(dest, out_name))
     finally:
         cpu_stop(validators, tag, dest)
     print("saved", os.path.join(dest, "bdb_%s.json" % tag), flush=True)
@@ -227,6 +287,7 @@ def main():
     parser.add_argument("--hosts", default=os.path.join(os.path.dirname(__file__), "hosts.lan.env"))
     parser.add_argument("--modes", default="direct,shacl,delta")
     parser.add_argument("--only-fail-closed", action="store_true")
+    parser.add_argument("--only-engine-down", action="store_true")
     parser.add_argument("--wan", action="store_true")
     parser.add_argument("--tag", default="lan4")
     parser.add_argument("--n-offer", default="500")

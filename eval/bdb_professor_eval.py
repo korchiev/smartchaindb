@@ -38,6 +38,7 @@ N_LOAD = int(os.environ.get("N_LOAD", "16"))
 LOAD_CONC = [int(x) for x in os.environ.get("LOAD_CONC", "1,2,4,8").split(",") if x.strip()]
 MATRIX_REPS = int(os.environ.get("MATRIX_REPS", "2"))
 SEQ_REPS = int(os.environ.get("SEQ_REPS", "2"))
+COV_REPS = int(os.environ.get("COV_REPS", "2"))
 N_RATIO = int(os.environ.get("N_RATIO", "60"))
 RATIOS = [float(x) for x in os.environ.get("RATIOS", "0,0.1,0.25,0.5,1.0").split(",") if x.strip()]
 OPEN_RATES = [float(x) for x in os.environ.get("OPEN_RATES", "5,10,20,40,80,160").split(",") if x.strip()]
@@ -624,6 +625,123 @@ def run_delta_sequence(reps, policies=("delta", "entity", "flush")):
     for r in rows:
         r.pop("unused", None)
     return {"reps": reps, "summary": summary, "rows": rows}
+
+
+def run_coverage_break(reps, policy="delta"):
+    """Coverage probe: omit one declared fact from the projection on purpose
+    and ask whether the read-set guard notices.
+
+    The REQUEST_RETURN->SELL class depends on an *absence*: no earlier return
+    request for the same sale. The projection records that fact as the
+    ``referenced_by`` list on the SELL part. This probe drops that list, which
+    is exactly the kind of omission a hand-written contract can contain. Each
+    sequence runs with the intact and the broken projection, with and without
+    the commit signal, and records (a) whether the cold verdict was cached,
+    (b) how many validations the guard flagged as uncovered, and (c) whether a
+    stale verdict was served after the duplicate committed.
+
+    Expected with the id-level read set the sidecar reports today (the 64-hex
+    ids that appear in its query filters): the uniqueness query mentions only
+    the sale id, which the broken projection still covers, so the guard stays
+    silent and the no-signal variant serves a stale accept. A predicate-level
+    read set should instead make the broken projection non-cacheable.
+    Runs in-process on a validator, like run_delta_sequence."""
+    from bigchaindb.lib import BigchainDB
+    from bigchaindb.models import Transaction as ModelTx
+    from bigchaindb.common.exceptions import ValidationError
+    from bigchaindb.common import shacl_delta
+
+    bigchain = BigchainDB()
+    client = get_shacl_validator()
+    orig = (client.enabled, client.cache_enabled, client.delta_cache)
+    client.enabled = True
+    intact_collect = shacl_delta.collect_dep_state
+
+    def broken_collect(bc, tx_dict):
+        parts = intact_collect(bc, tx_dict)
+        if tx_dict.get("operation") == "REQUEST_RETURN":
+            for part in parts:
+                if part.get("operation") == "SELL":
+                    part.pop("referenced_by", None)
+        return parts
+
+    def verdict(tx_dict):
+        try:
+            ModelTx.from_dict(tx_dict).validate(bigchain)
+            return True
+        except ValidationError:
+            return False
+
+    def fresh(tx_dict):
+        saved = client.cache_enabled
+        client.cache_enabled = False
+        try:
+            return verdict(tx_dict)
+        finally:
+            client.cache_enabled = saved
+
+    def step(name, tx_dict):
+        before = client.delta_cache.stats()
+        uncovered_before = client.readset_uncovered
+        v = verdict(tx_dict)
+        after = client.delta_cache.stats()
+        if after["hits"] > before["hits"]:
+            kind = "hit"
+        elif after["misses"] > before["misses"]:
+            kind = "miss"
+        else:
+            kind = "none"
+        f = fresh(tx_dict)
+        return {"step": name, "kind": kind, "verdict": v, "fresh_verdict": f, "stale": v != f,
+                "entries_after": after["size"],
+                "uncovered_reads": client.readset_uncovered - uncovered_before}
+
+    rows = []
+    try:
+        for rep in range(reps):
+            for projection in ("intact", "broken"):
+                shacl_delta.collect_dep_state = intact_collect if projection == "intact" else broken_collect
+                for signal in (True, False):
+                    ctx = build_stage("sell", "cov{}-{}".format(rep, projection[:3]))
+                    T = make_return(ctx["buyer"], ctx["create_id"], ctx["sell_id"])
+                    R = make_return(ctx["buyer"], ctx["create_id"], ctx["sell_id"], nonce="first")
+                    T_dict = T.to_dict()
+                    client.cache_enabled = True
+                    client.delta_cache = SHACLDeltaCache(policy=policy)
+                    steps = [step("cold", T_dict), step("repeat", T_dict)]
+                    st, _, resp = post_tx(R)
+                    require_ok(st, resp, "coverage duplicate REQUEST_RETURN")
+                    if signal:
+                        client.on_tx_committed(R.to_dict())
+                    steps.append(step("after_duplicate", T_dict))
+                    rows.append({
+                        "rep": rep, "projection": projection, "policy": policy, "commit_signal": signal,
+                        "steps": steps,
+                        "cached_cold_verdict": steps[0]["entries_after"] > 0,
+                        "uncovered_reads": sum(s["uncovered_reads"] for s in steps),
+                        "stale_reuse": sum(1 for s in steps if s["stale"]),
+                        "verdict_flipped": steps[0]["verdict"] != steps[2]["fresh_verdict"],
+                    })
+                    print("coverage", projection, "signal" if signal else "nosignal",
+                          [s["kind"] for s in steps], "cached", rows[-1]["cached_cold_verdict"],
+                          "uncovered", rows[-1]["uncovered_reads"], "stale", rows[-1]["stale_reuse"], flush=True)
+    finally:
+        shacl_delta.collect_dep_state = intact_collect
+        client.enabled, client.cache_enabled, client.delta_cache = orig
+    summary = {}
+    for projection in ("intact", "broken"):
+        for signal in (True, False):
+            sel = [r for r in rows if r["projection"] == projection and r["commit_signal"] == signal]
+            if not sel:
+                continue
+            summary["{}/{}".format(projection, "signal" if signal else "nosignal")] = {
+                "sequences": len(sel),
+                "cached_cold_verdict": sum(1 for r in sel if r["cached_cold_verdict"]),
+                "uncovered_reads": sum(r["uncovered_reads"] for r in sel),
+                "verdict_flipped": sum(1 for r in sel if r["verdict_flipped"]),
+                "stale_reuse": sum(r["stale_reuse"] for r in sel),
+            }
+    return {"reps": reps, "policy": policy, "summary": summary, "rows": rows}
 
 
 def run_update_ratio_sweep(n, ratios):
@@ -1284,6 +1402,8 @@ def main():
                         help="validator microbench + Δ sequence only (run inside a validator)")
     parser.add_argument("--state-label", default=None,
                         help="label recorded with --only-inprocess results (e.g. seeded ledger size)")
+    parser.add_argument("--only-coverage-break", action="store_true",
+                        help="projection-coverage probe only (run inside a validator)")
     parser.add_argument("--wan", action="store_true")
     args = parser.parse_args()
 
@@ -1299,6 +1419,15 @@ def main():
     wait_api()
     import logging
     logging.getLogger("bigchaindb").setLevel(logging.CRITICAL)  # rejections are expected; keep stdout readable
+    if args.only_coverage_break:
+        payload = {"platform": "bigchaindb", "live_mode": args.live_mode, "started_unix": time.time(),
+                   "cov_reps": COV_REPS}
+        print("=== projection coverage break reps={} ===".format(COV_REPS))
+        payload["coverage_break"] = run_coverage_break(COV_REPS)
+        print("coverage summary", json.dumps(payload["coverage_break"]["summary"]))
+        payload["server_stats"] = shacl_stats(reset=False)
+        write(payload)
+        return
     if args.only_inprocess:
         payload = {"platform": "bigchaindb", "live_mode": args.live_mode, "started_unix": time.time(),
                    "n_val": N_VAL, "seq_reps": SEQ_REPS, "state_label": args.state_label}
