@@ -2246,23 +2246,12 @@ class Transaction(object):
             raise ValueError("Buyer cannot be the same as advertiser")
 
         # Validate offer is within time
-        from datetime import datetime
-        # Python 3.6 compatible datetime parsing
-        expiry_str = self.metadata.get('offer_expiry', '').replace('Z', '+00:00')
-        # Remove microseconds for simpler parsing
-        if '.' in expiry_str:
-            base_part = expiry_str.split('.')[0]
-            timezone_part = expiry_str.split('+')[1] if '+' in expiry_str else ''
-            expiry_str = base_part + ('+' + timezone_part if timezone_part else '')
-        
-        # Parse without timezone first, then add UTC timezone
-        offer_expiry = datetime.strptime(expiry_str.split('+')[0], '%Y-%m-%dT%H:%M:%S')
-        # Add UTC timezone info
-        from datetime import timezone
-        offer_expiry = offer_expiry.replace(tzinfo=timezone.utc)
-        current_time = datetime.utcnow().replace(tzinfo=timezone.utc)
-        
-        if current_time > offer_expiry:
+        import time
+        from bigchaindb.common.validation_context import timestamp_seconds
+        offer_expiry = timestamp_seconds(self.metadata.get('offer_expiry', ''))
+        context = getattr(bigchain, '_validation_time', None)
+        current_time = time.time() if context is None else timestamp_seconds(context)
+        if current_time >= offer_expiry:
             raise ValueError("Offer has expired")
 
         # Note: BUY_OFFER is an intent/announcement transaction with escrow details

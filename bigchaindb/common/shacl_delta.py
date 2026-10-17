@@ -2,8 +2,8 @@
 
 Cache key is (tx_id, dependency-state-hash). The hash covers the referenced
 prior transactions' operation/asset/metadata, not just their IDs. A committed
-transaction invalidates every entry that listed that tx (or its deps) as a
-dependency.
+transaction invalidates entries indexed by the entities it writes or whose
+derived-query answers it changes. Reading an entity does not itself change it.
 """
 import hashlib
 import json
@@ -15,7 +15,11 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
-CacheEntry = Tuple[float, bool, List[Dict[str, Any]]]
+CacheEntry = Tuple[float, bool, List[Dict[str, Any]], Optional[float]]
+
+
+class ProjectionUnavailable(ValueError):
+    """A required query could not be observed; do not reuse a verdict."""
 
 
 def _nested(d: Any, *path: str) -> Any:
@@ -56,8 +60,8 @@ def dependency_ids(tx_dict: Dict[str, Any]) -> List[str]:
 def affected_ids(tx_dict: Dict[str, Any]) -> List[str]:
     """Entity ids whose cached verdicts a committed tx can change.
 
-    Always includes the tx id and its dependency ids, plus marketplace
-    invalidation-pattern extras (asset on SELL/ADV/TRANSFER, offer on SELL).
+    Include writes and derived-query effects, not everything a tx reads.
+    In particular, an offer reads an advertisement but does not change it.
     """
     found: List[str] = []
 
@@ -66,8 +70,6 @@ def affected_ids(tx_dict: Dict[str, Any]) -> List[str]:
             found.append(value)
 
     add(tx_dict.get("id"))
-    for dep_id in dependency_ids(tx_dict):
-        add(dep_id)
 
     op = tx_dict.get("operation")
     asset = tx_dict.get("asset") or {}
@@ -78,6 +80,10 @@ def affected_ids(tx_dict: Dict[str, Any]) -> List[str]:
         add(data.get("id") or asset.get("id"))
     if op == "SELL":
         add(data.get("buy_offer_id"))
+    if op == "REQUEST_RETURN":
+        add(data.get("sell_transaction_id"))
+    if op == "SELLER_ACCEPT_RETURN":
+        add(data.get("request_return_id"))
     return found
 
 
@@ -193,6 +199,9 @@ def projection_ids(parts: List[Dict[str, Any]]) -> Set[str]:
 def compute_dep_state(bigchain: Any, tx_dict: Dict[str, Any]) -> Tuple[str, List[str], Set[str]]:
     """(dependency hash, dependency ids to index under, ids covered by the projection)."""
     parts = collect_dep_state(bigchain, tx_dict)
+    if any(p.get(key) is None for p in parts
+           for key in ("update_ids", "referenced_by", "open_ads") if key in p):
+        raise ProjectionUnavailable("A required dependency query is unavailable")
     return hash_dep_state(parts), dep_ids_from_parts(parts), projection_ids(parts)
 
 
@@ -234,11 +243,12 @@ class SHACLDeltaCache:
 
     def _reset_counters_locked(self) -> None:
         self.hits = 0
-        # misses = cold_misses + dep_change_misses (+ ttl_expirations)
+        # misses = cold_misses + dep_change_misses + ttl/context expirations
         self.misses = 0
         self.cold_misses = 0          # no verdict for this tx id at all
         self.dep_change_misses = 0    # verdict exists, but dependency values differ
         self.ttl_expirations = 0
+        self.context_expirations = 0  # time-bounded verdict no longer applies
         # invalidations = retirements + dep_invalidations
         self.invalidations = 0
         self.retirements = 0          # committed tx's own verdict removed
@@ -248,7 +258,7 @@ class SHACLDeltaCache:
         self.flushes = 0              # policy=flush: whole-cache clears on commit
         self.entity_hash_mismatch_hits = 0  # policy=entity: reused despite changed dep values
 
-    def get(self, tx_id: str, dep_hash: str) -> Optional[Tuple[bool, List[Dict[str, Any]]]]:
+    def get(self, tx_id: str, dep_hash: str, validation_time: Optional[float] = None) -> Optional[Tuple[bool, List[Dict[str, Any]]]]:
         key = (tx_id, dep_hash)
         with self._lock:
             if self.policy == "entity":
@@ -265,7 +275,13 @@ class SHACLDeltaCache:
                 else:
                     self.cold_misses += 1
                 return None
-            ts, conforms, results = entry
+            ts, conforms, results, valid_until = entry
+            now = time.time() if validation_time is None else validation_time
+            if valid_until is not None and now >= valid_until:
+                self._drop_locked(key)
+                self.misses += 1
+                self.context_expirations += 1
+                return None
             if self.ttl is not None and (time.time() - ts) > self.ttl:
                 self._drop_locked(key)
                 self.misses += 1
@@ -281,6 +297,7 @@ class SHACLDeltaCache:
         conforms: bool,
         results: List[Dict[str, Any]],
         dep_ids: Iterable[str],
+        valid_until: Optional[float] = None,
     ) -> None:
         key = (tx_id, dep_hash)
         with self._lock:
@@ -292,7 +309,7 @@ class SHACLDeltaCache:
             if len(self._store) >= self.max_size and key not in self._store:
                 self._evict_one_locked()
                 self.evictions += 1
-            self._store[key] = (time.time(), conforms, list(results))
+            self._store[key] = (time.time(), conforms, list(results), valid_until)
             for entity in set(list(dep_ids) + [tx_id]):
                 if not entity:
                     continue
@@ -345,10 +362,10 @@ class SHACLDeltaCache:
         with self._lock:
             entries = len(self._store)
             payload = 0
-            for key, (ts, conforms, results) in self._store.items():
+            for key, (ts, conforms, results, valid_until) in self._store.items():
                 payload += len(key[0]) + len(key[1]) + 8 + 1
                 payload += len(json.dumps(results, default=str)) if results else 0
-                payload += sys.getsizeof(key) + sys.getsizeof((ts, conforms, results))
+                payload += sys.getsizeof(key) + sys.getsizeof((ts, conforms, results, valid_until))
             index = sum(sys.getsizeof(k) + sys.getsizeof(v) + len(v) * 72 for k, v in self._index.items())
             return {
                 "entries": entries,
@@ -369,6 +386,7 @@ class SHACLDeltaCache:
                 "cold_misses": self.cold_misses,
                 "dep_change_misses": self.dep_change_misses,
                 "ttl_expirations": self.ttl_expirations,
+                "context_expirations": self.context_expirations,
                 "invalidations": self.invalidations,
                 "retirements": self.retirements,
                 "dep_invalidations": self.dep_invalidations,

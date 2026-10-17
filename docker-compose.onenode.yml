@@ -37,6 +37,9 @@ services:
     volumes:
       - ./bigchaindb/backend/localshacl/shapes/shapes:/app/shapes
       - ./bigchaindb/backend/localshacl/shapes/index.js:/app/index.js
+      - ./bigchaindb/backend/localshacl/shapes/transaction_graph.js:/app/transaction_graph.js
+      - ./bigchaindb/backend/localshacl/shapes/state_context.js:/app/state_context.js
+      - ./bigchaindb/backend/localshacl/shapes/state_validator.js:/app/state_validator.js
       - /app/node_modules
     restart: always
 

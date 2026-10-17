@@ -8,8 +8,10 @@ from bigchaindb.common.exceptions import InvalidSignature, DuplicateTransaction,
 from bigchaindb.common.schema import validate_transaction_schema
 from bigchaindb.common.transaction import Transaction
 from bigchaindb.common.utils import validate_txn_obj, validate_key
-from bigchaindb.common.shacl_delta import compute_dep_state
+from bigchaindb.common.shacl_delta import compute_dep_state, ProjectionUnavailable
 from bigchaindb.common.shacl_validator import get_shacl_validator
+from bigchaindb.common.transaction_security import validate_ledger_authentication
+from bigchaindb.common.ledger_state import LedgerStateView
 import logging
 import time
 
@@ -36,6 +38,13 @@ class Transaction(Transaction):
                 "transaction `{}` already exists".format(self.id)
             )
 
+        bigchain = LedgerStateView(bigchain, current_transactions)
+        # Always authenticate, including on a declarative-cache hit.
+        try:
+            validate_ledger_authentication(self, bigchain, current_transactions)
+        except (TypeError, ValueError, AttributeError, IndexError) as exc:
+            raise ValidationError("Invalid authentication or input structure: {}".format(exc))
+
         shacl_validator = get_shacl_validator()
         if not shacl_validator.enabled:
             t0 = time.perf_counter()
@@ -48,10 +57,21 @@ class Transaction(Transaction):
         
         tx_dict = self.to_dict()
         t0 = time.perf_counter()
-        dep_hash, dep_ids, covered = compute_dep_state(bigchain, tx_dict)
+        # Until projections materialize the block overlay themselves, a
+        # nonempty prefix is a conservative non-cacheable context. Full
+        # validation still receives that prefix and enforces its effects.
+        if current_transactions or not shacl_validator.cache_enabled:
+            dep_hash, dep_ids, covered = None, [], None
+        else:
+            try:
+                dep_hash, dep_ids, covered = compute_dep_state(bigchain, tx_dict)
+            except ProjectionUnavailable:
+                dep_hash, dep_ids, covered = None, [], None
         shacl_validator.record_timing("dep_fetch", (time.perf_counter() - t0) * 1000.0)
         conforms, results = shacl_validator.validate_transaction(
-            tx_dict, dep_state_hash=dep_hash, dep_ids=dep_ids, covered_ids=covered
+            tx_dict, dep_state_hash=dep_hash, dep_ids=dep_ids, covered_ids=covered,
+            pending_transactions=[tx.to_dict() for tx in current_transactions],
+            validation_time=getattr(bigchain, "_validation_time", None),
         )
         
         if not conforms:
@@ -145,6 +165,10 @@ class Transaction(Transaction):
         status = meta.get("status")
         if status and status not in ("OPEN", "LOCKED", "CLOSED"):
             raise ValidationError("advertisement status must be OPEN, LOCKED, or CLOSED")
+        current = bigchain.get_effective_advertisement_status(adv_id)
+        allowed = {"OPEN": ("OPEN", "LOCKED", "CLOSED"), "LOCKED": ("LOCKED", "CLOSED"), "CLOSED": ("CLOSED",)}
+        if current not in allowed or status not in allowed[current]:
+            raise ValidationError("Invalid advertisement status transition")
 
     def _validate_request_return_direct(self, bigchain):
         asset, data = self._asset_parts()
@@ -158,6 +182,8 @@ class Transaction(Transaction):
         buyer = (sell_tx.metadata or {}).get("buyer_public_key")
         if requester and buyer and requester != buyer:
             raise ValidationError("requester must be the buyer from the sell")
+        if bigchain.referencing_transactions("REQUEST_RETURN", "asset.data.sell_transaction_id", sell_id):
+            raise ValidationError("A return request already exists for the sale")
 
     def _validate_seller_accept_return_direct(self, bigchain):
         asset, data = self._asset_parts()
@@ -175,6 +201,8 @@ class Transaction(Transaction):
         seller = (getattr(sell_tx, "metadata", None) or {}).get("seller_public_key")
         if acceptor and seller and acceptor != seller:
             raise ValidationError("only the seller of the sale can accept the return")
+        if bigchain.referencing_transactions("SELLER_ACCEPT_RETURN", "asset.data.request_return_id", req_id):
+            raise ValidationError("A return acceptance already exists for the request")
 
     @classmethod
     def from_dict(cls, tx_body):

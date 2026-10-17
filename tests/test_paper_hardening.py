@@ -258,6 +258,9 @@ class TestValidateTransaction:
             "conforms": conforms,
             "results": results or [],
             "read_set": read_set,
+            "validation_phases": {"state": "completed"},
+            "validation_protocol": 2,
+            "valid_until": None,
         }
         return resp
 
@@ -571,3 +574,63 @@ class TestSchemaEnvelopes:
         tx["outputs"] = [_valid_output(), _valid_output()]
         with pytest.raises(ValidationError):
             validate(instance=tx, schema=schema)
+
+
+class TestCompleteValidationProtocol:
+    def test_state_skipped_is_rejected_not_cached(self, enabled_client):
+        enabled_client.cache_enabled = True
+        response = TestValidateTransaction()._post_ok(True, read_set={'tx_ids': [], 'queries': 0})
+        response.json.return_value['validation_phases']['state'] = 'skipped'
+        with patch('requests.post', return_value=response):
+            ok, errors = enabled_client.validate_transaction(
+                _valid_buy_offer_tx(), dep_state_hash='h', covered_ids=set())
+        assert ok is False
+        assert 'not completed' in errors[0]['message']
+        assert enabled_client.delta_cache.stats()['size'] == 0
+
+    def test_string_conformance_is_malformed(self, enabled_client):
+        response = TestValidateTransaction()._post_ok('false')
+        with patch('requests.post', return_value=response):
+            ok, _ = enabled_client.validate_transaction(_valid_buy_offer_tx())
+        assert ok is False
+
+    def test_old_sidecar_cannot_silently_weaken_validation(self, enabled_client):
+        response = TestValidateTransaction()._post_ok(True)
+        response.json.return_value.pop('validation_protocol')
+        with patch('requests.post', return_value=response):
+            ok, errors = enabled_client.validate_transaction(_valid_buy_offer_tx())
+        assert ok is False
+        assert 'protocol' in errors[0]['message']
+
+    def test_malformed_readset_cannot_enter_cache(self, enabled_client):
+        assert not enabled_client._check_read_set('BUY_OFFER', 'tx', {}, [], set())
+        assert not enabled_client._check_read_set('BUY_OFFER', 'tx', {'tx_ids': 'bad', 'queries': 1}, [], set())
+
+    def test_warm_verdict_expires_at_ledger_time(self, enabled_client):
+        enabled_client.cache_enabled = True
+        helper = TestValidateTransaction()
+        first = helper._post_ok(True, read_set={'tx_ids': [], 'queries': 0})
+        later = helper._post_ok(False, [{'message': ['Offer expired']}], read_set={'tx_ids': [], 'queries': 0})
+        first.json.return_value['valid_until'] = '2030-01-01T00:00:00.000Z'
+        later.json.return_value['valid_until'] = '2030-01-01T00:00:00.000Z'
+        tx = _valid_buy_offer_tx()
+        with patch('requests.post', side_effect=[first, later]) as post:
+            assert enabled_client.validate_transaction(tx, dep_state_hash='h', covered_ids=set(),
+                validation_time='2029-12-31T23:59:59.000Z')[0]
+            assert not enabled_client.validate_transaction(tx, dep_state_hash='h', covered_ids=set(),
+                validation_time='2030-01-01T00:00:00.000Z')[0]
+        assert post.call_count == 2
+        assert enabled_client.delta_cache.stats()['context_expirations'] == 1
+        assert enabled_client.delta_cache.stats()['size'] == 0
+
+    def test_nonempty_block_prefix_bypasses_a_warm_entry(self, enabled_client):
+        enabled_client.cache_enabled = True
+        tx = _valid_buy_offer_tx()
+        enabled_client.delta_cache.put(tx['id'], 'h', True, [], [])
+        response = TestValidateTransaction()._post_ok(False, [{'message': ['Advertisement closed']}])
+        prefix = [{'id': 'close', 'operation': 'UPDATE_ADV'}]
+        with patch('requests.post', return_value=response) as post:
+            assert not enabled_client.validate_transaction(tx, dep_state_hash='h',
+                pending_transactions=prefix)[0]
+        assert post.call_count == 1
+        assert post.call_args.kwargs['json']['pendingTransactions'] == prefix

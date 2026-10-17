@@ -6,6 +6,8 @@ for declarative transaction validation using RDF and SHACL constraints.
 """
 
 import os
+import json
+import re
 import requests
 import logging
 import threading
@@ -13,6 +15,7 @@ import time
 from typing import Dict, Any, Tuple, List, Optional, Set
 from bigchaindb import config_utils
 from bigchaindb.common.shacl_delta import SHACLDeltaCache, dependency_ids, ConflictTable
+from bigchaindb.common.validation_context import timestamp_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +292,11 @@ class SHACLValidatorClient:
         have seen. Return whether this evaluation is safe to cache."""
         if not isinstance(read_set, dict) or covered_ids is None:
             return False
+        ids = read_set.get("tx_ids")
+        queries = read_set.get("queries")
+        if (not isinstance(ids, list) or any(not isinstance(t, str) for t in ids)
+                or isinstance(queries, bool) or not isinstance(queries, int) or queries < 0):
+            return False
         touched = {t for t in (read_set.get("tx_ids") or []) if isinstance(t, str)}
         touched.discard(tx_id)
         declared = set(covered_ids) | set(index_ids)
@@ -317,6 +325,8 @@ class SHACLValidatorClient:
         dep_state_hash: Optional[str] = None,
         dep_ids: Optional[List[str]] = None,
         covered_ids: Optional[Set[str]] = None,
+        pending_transactions: Optional[List[Dict[str, Any]]] = None,
+        validation_time: Optional[str] = None,
     ) -> Tuple[bool, List[Dict[str, Any]]]:
         """
         Validate a transaction against SHACL shapes.
@@ -344,10 +354,14 @@ class SHACLValidatorClient:
             return False, [{"message": "Missing operation field"}]
 
         tx_id = tx_dict.get('id', 'unknown')
+        try:
+            context_time = None if validation_time is None else timestamp_seconds(validation_time)
+        except (TypeError, ValueError):
+            return self._fail("Invalid validation time")
 
-        if self.cache_enabled and dep_state_hash is not None:
+        if self.cache_enabled and dep_state_hash is not None and not pending_transactions:
             lookup_start = time.perf_counter()
-            cached = self.delta_cache.get(tx_id, dep_state_hash)
+            cached = self.delta_cache.get(tx_id, dep_state_hash, context_time)
             self.timing.record("cache_lookup", (time.perf_counter() - lookup_start) * 1000.0)
             if cached is not None:
                 logger.debug(
@@ -409,20 +423,35 @@ class SHACLValidatorClient:
             
             # Call SHACL microservice
             http_start = time.perf_counter()
+            request_body = {'shapeType': operation, 'data': turtle_data,
+                            'pendingTransactions': pending_transactions or []}
+            if validation_time is not None:
+                request_body['validationTime'] = validation_time
             response = requests.post(
                 f'{self.endpoint}/validate',
-                json={
-                    'shapeType': operation,
-                    'data': turtle_data
-                },
+                json=request_body,
                 timeout=self.timeout
             )
             self.timing.record("http", (time.perf_counter() - http_start) * 1000.0)
             
             if response.status_code == 200:
                 result = response.json()
-                conforms = result.get('conforms', False)
+                if not isinstance(result, dict) or not isinstance(result.get('conforms'), bool):
+                    return self._fail("Malformed SHACL validation response")
+                if result.get('validation_protocol') != 2:
+                    return self._fail("Unsupported SHACL validation protocol; upgrade the sidecar")
+                conforms = result['conforms']
                 results = result.get('results', [])
+                if not isinstance(results, list) or any(not isinstance(r, dict) for r in results):
+                    return self._fail("Malformed SHACL validation results")
+                phases = result.get('validation_phases') or {}
+                if not isinstance(phases, dict) or (conforms and phases.get('state') != 'completed'):
+                    return self._fail("SHACL ledger-state validation was not completed")
+                valid_until = result.get('valid_until')
+                try:
+                    deadline = None if valid_until is None else timestamp_seconds(valid_until)
+                except (TypeError, ValueError):
+                    return self._fail("Invalid validation deadline")
                 engine_timing = result.get('timings_ms') or {}
                 for phase in ('parse', 'shacl', 'state', 'total'):
                     if isinstance(engine_timing.get(phase), (int, float)):
@@ -448,13 +477,15 @@ class SHACLValidatorClient:
                 if reason:
                     return self._fail("SHACL+Δ conflict: {}".format(reason))
 
-                if self.cache_enabled and dep_state_hash is not None and cacheable:
+                if (self.cache_enabled and dep_state_hash is not None and cacheable
+                        and not pending_transactions and (conforms or deadline is None)):
                     self.delta_cache.put(
                         tx_id,
                         dep_state_hash,
                         conforms,
                         results,
                         index_ids,
+                        valid_until=deadline,
                     )
                 
                 return conforms, results
@@ -544,11 +575,12 @@ class SHACLValidatorClient:
     
     def _turtle_literals(self, key: str, value: Any, indent: str) -> str:
         """Render a JSON value as one or more Turtle predicate lines."""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key):
+            raise ValueError("Unsupported RDF field name")
         if isinstance(value, bool):
             return f'{indent}bdb:{key} {"true" if value else "false"} ;\n'
         if isinstance(value, str):
-            escaped = value.replace('\\', '\\\\').replace('"', '\\"')
-            return f'{indent}bdb:{key} "{escaped}" ;\n'
+            return f'{indent}bdb:{key} {json.dumps(value, ensure_ascii=False)} ;\n'
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return f'{indent}bdb:{key} {value} ;\n'
         if isinstance(value, list):
@@ -581,7 +613,7 @@ class SHACLValidatorClient:
             asset_data = asset['data']
             turtle += "    bdb:asset [\n"
             if 'id' in asset:
-                turtle += f'        bdb:id "{asset["id"]}" ;\n'
+                turtle += self._turtle_literals('id', asset['id'], "        ")
             turtle += "        bdb:data [\n"
             
             for key, value in asset_data.items():
@@ -596,17 +628,12 @@ class SHACLValidatorClient:
             turtle += "    bdb:asset [\n"
             
             if 'id' in asset:
-                turtle += f'        bdb:id "{asset["id"]}" ;\n'
+                turtle += self._turtle_literals('id', asset['id'], "        ")
             
             if 'data' in asset:
                 turtle += "        bdb:data [\n"
                 for key, value in asset['data'].items():
-                    if isinstance(value, str):
-                        turtle += f'            bdb:{key} "{value}" ;\n'
-                    elif isinstance(value, (int, float)):
-                        turtle += f'            bdb:{key} {value} ;\n'
-                    elif isinstance(value, bool):
-                        turtle += f'            bdb:{key} {"true" if value else "false"} ;\n'
+                    turtle += self._turtle_literals(key, value, "            ")
                 turtle = turtle.rstrip(';\n') + '\n'
                 turtle += "        ] ;\n"
             
@@ -617,6 +644,8 @@ class SHACLValidatorClient:
     
     def _serialize_metadata_value(self, key: str, value: Any, indent: str) -> str:
         """Render a metadata value, including nested objects SHACL targets with sh:node."""
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", key):
+            raise ValueError("Unsupported RDF field name")
         if value is None:
             return ""
         if isinstance(value, dict):
@@ -630,8 +659,7 @@ class SHACLValidatorClient:
         if isinstance(value, str) and (
             "timestamp" in key.lower() or "expiry" in key.lower() or key.lower().endswith("date")
         ):
-            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-            return f'{indent}bdb:{key} "{escaped}"^^xsd:dateTime ;\n'
+            return f'{indent}bdb:{key} {json.dumps(value, ensure_ascii=False)}^^xsd:dateTime ;\n'
         if isinstance(value, float):
             return f'{indent}bdb:{key} "{value}"^^xsd:decimal ;\n'
         return self._turtle_literals(key, value, indent)

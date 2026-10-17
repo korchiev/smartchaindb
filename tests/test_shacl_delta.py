@@ -157,3 +157,44 @@ def test_missing_dependency_is_hashed_as_missing():
     }
     parts = delta.collect_dep_state(Empty(), offer)
     assert parts == [{"id": "nope", "missing": True}]
+
+
+def test_offer_commit_does_not_invalidate_other_pending_offers():
+    cache = delta.SHACLDeltaCache()
+    cache.put('offer1', 'h', True, [], ['adv'])
+    cache.put('offer2', 'h', True, [], ['adv'])
+    cache.on_tx_committed({'id': 'offer1', 'operation': 'BUY_OFFER',
+                           'asset': {'data': {'advertisement_id': 'adv'}}})
+    assert cache.get('offer2', 'h') == (True, [])
+    assert cache.stats()['retirements'] == 1
+    assert cache.stats()['dep_invalidations'] == 0
+
+
+def test_expiry_is_checked_at_the_validation_context_time():
+    cache = delta.SHACLDeltaCache()
+    cache.put('offer', 'h', True, [], ['adv'], valid_until=100.0)
+    assert cache.get('offer', 'h', validation_time=99.999) == (True, [])
+    assert cache.get('offer', 'h', validation_time=100.0) is None
+    assert cache.stats()['context_expirations'] == 1
+
+
+def test_return_commit_invalidates_other_returns_for_the_same_sale():
+    cache = delta.SHACLDeltaCache()
+    cache.put('return2', 'h', True, [], ['sale'])
+    cache.on_tx_committed({'id': 'return1', 'operation': 'REQUEST_RETURN',
+                           'asset': {'data': {'sell_transaction_id': 'sale'}}})
+    assert cache.get('return2', 'h') is None
+    assert cache.stats()['dep_invalidations'] == 1
+
+
+def test_unavailable_projection_query_is_not_a_stable_cache_key():
+    class Store:
+        def get_transaction(self, _):
+            return {'id': 'adv', 'operation': 'ADVERTISEMENT', 'metadata': {'status': 'OPEN'}}
+    tx = {'id': 'offer', 'operation': 'BUY_OFFER', 'asset': {'data': {'advertisement_id': 'adv'}}}
+    try:
+        delta.compute_dep_state(Store(), tx)
+    except delta.ProjectionUnavailable:
+        pass
+    else:
+        raise AssertionError('An unobserved required query must disable caching')

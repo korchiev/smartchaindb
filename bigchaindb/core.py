@@ -7,6 +7,7 @@
 with Tendermint.
 """
 from bigchaindb.common.transaction import Transaction
+from bigchaindb.common.validation_context import block_validation_time
 import json
 import logging
 import os
@@ -182,7 +183,14 @@ class App(BaseApplication):
         logger.debug("check_tx: %s", raw_transaction)
         _apply_shacl_stats_reset()
         transaction = decode_transaction(raw_transaction)
-        if self.bigchaindb.is_valid_transaction(transaction):
+        # CheckTx is speculative: do not inherit the previous block's clock.
+        block_time = getattr(self.bigchaindb, "_validation_time", None)
+        try:
+            self.bigchaindb._validation_time = None
+            valid = self.bigchaindb.is_valid_transaction(transaction)
+        finally:
+            self.bigchaindb._validation_time = block_time
+        if valid:
             logger.debug("check_tx: VALID")
             log_metric(
                 "check_tx",
@@ -225,6 +233,7 @@ class App(BaseApplication):
 
         self.block_txn_ids = []
         self.block_transactions = []
+        self.bigchaindb._validation_time = block_validation_time(req_begin_block.header.time)
         return self.abci.ResponseBeginBlock()
 
     def deliver_tx(self, raw_transaction):
@@ -237,6 +246,8 @@ class App(BaseApplication):
         self.abort_if_abci_chain_is_not_synced()
 
         logger.debug("deliver_tx: %s", raw_transaction)
+        if getattr(self.bigchaindb, "_validation_time", None) is None:
+            raise RuntimeError("DeliverTx requires a validated BeginBlock timestamp")
         transaction = self.bigchaindb.is_valid_transaction(
             decode_transaction(raw_transaction), self.block_transactions
         )
