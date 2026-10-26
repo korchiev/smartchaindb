@@ -36,7 +36,7 @@ MODES = ("direct", "shacl", "delta")
 COLORS = {"direct": DIRECT, "shacl": SHACL, "delta": DELTA}
 PRETTY = {"direct": "Direct", "shacl": "SHACL", "delta": "SHACL+$\\Delta$"}
 CONTAINERS = ("bdb", "tm", "mongo", "shacl")
-CONTAINER_LABEL = {"bdb": "BigchainDB", "tm": "Tendermint", "mongo": "MongoDB", "shacl": "SHACL engine"}
+CONTAINER_LABEL = {"bdb": "BigchainDB", "tm": "Tendermint", "mongo": "MongoDB", "shacl": "SHACL service"}
 
 plt.rcParams.update({
     "font.size": 9,
@@ -145,7 +145,7 @@ def fig_phases(summary):
     ax.set_ylabel("Median per validation (ms)")
     ax.set_ylim(0, max(bottoms) * 1.9)
     n = (val.get("shacl_miss") or {}).get("n", "?")
-    ax.set_title("In-process validation on one validator (n=%s; whisker = 95%% CI of the total)" % n)
+    ax.set_title("Direct, miss, and hit: n=%s. Value change: one probe." % n)
     ax.legend(frameon=False, ncol=2, loc="upper left", fontsize=7)
     save(fig, "fig_validation_phases")
 
@@ -169,7 +169,7 @@ def fig_state(summary):
             ax.plot(xs, ys, marker="o", linestyle=style, color=color, label="%s, %s" % (label, suffix))
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel("Seeded lifecycles in the ledger")
+    ax.set_xlabel("Synthetic workflow units")
     ax.set_ylabel("Median validation (ms, log)")
     ax.set_title("Validation cost vs. ledger size")
     ax.legend(frameon=False, ncol=2, fontsize=7)

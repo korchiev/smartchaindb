@@ -1,10 +1,10 @@
-# Hyperledger Fabric Integration (Plan B)
+# Hyperledger Fabric integration
 
-This folder implements the same marketplace workflow as SmartChainDB on Hyperledger Fabric, plus optional SHACL pre-validation.
+This folder implements the same marketplace workflow on Hyperledger Fabric, plus an optional client-side SHACL pre-check. Chaincode remains the authority. The shapes and conversion code here are not shared with the ledger sidecar.
 
-## Same functionality as SmartChainDB
+## Operations
 
-| SmartChainDB operation | Fabric chaincode function | State checks |
+| Ledger operation | Fabric chaincode function | State checks |
 |---|---|---|
 | CREATE | `CreateAsset` | asset id unique |
 | ADVERTISEMENT | `CreateAdvertisement` | asset exists, advertiser is owner, at most one OPEN ad |
@@ -48,6 +48,8 @@ Run **all of this from Ubuntu-26.04 (WSL)**, including both SHACL processes and 
 
 ## Bring-up
 
+`ROOT` is the root of this repository.
+
 ```bash
 # 1) Docker
 sudo service docker start
@@ -56,16 +58,16 @@ sudo service docker start
 cd ~/fabric-samples/test-network
 export PATH=$HOME/fabric-samples/bin:$PATH
 ./network.sh deployCC -c mychannel -ccn marketplace \
-  -ccp /mnt/c/Users/korchien/Research/smartchaindb/fabric/chaincode/marketplace \
+  -ccp "$ROOT/fabric/chaincode/marketplace" \
   -ccl go -ccv 1.2 -ccs 3
 
-# 3) SHACL validators (WSL Node, not Windows)
-# BigchainDB SHACL :3000
-cd /mnt/c/Users/korchien/Research/smartchaindb/bigchaindb/backend/localshacl/shapes
+# 3) SHACL validators (the same OS as the Fabric client)
+# Ledger SHACL service :3000
+cd "$ROOT/bigchaindb/backend/localshacl/shapes"
 MONGO_HOST=127.0.0.1 PORT=3000 node index.js
 
 # Fabric SHACL :3001 (separate terminal)
-cd /mnt/c/Users/korchien/Research/smartchaindb/fabric/shacl
+cd "$ROOT/fabric/shacl"
 npm install
 node server.js
 ```
@@ -73,7 +75,7 @@ node server.js
 Enroll a client identity once, then submit with or without SHACL:
 
 ```bash
-cd /mnt/c/Users/korchien/Research/smartchaindb/fabric/client
+cd "$ROOT/fabric/client"
 npm install
 source ./env.sh
 node enroll.js                 # $HOME/fabric-wallet; cryptogen User1 if CA is down
